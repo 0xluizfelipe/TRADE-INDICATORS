@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Simulador de Trades — Paper Trading</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --fundo: #0d1117; --painel: #161b22; --borda: #30363d;
+    --texto: #e6edf3; --texto2: #8b949e;
+    --verde: #2ea043; --vermelho: #da3633; --azul: #316dca; --amarelo: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--fundo); color: var(--texto); font: 14px/1.45 "Segoe UI", sans-serif; }
+  header {
+    display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--painel); border-bottom: 1px solid var(--borda);
+  }
+  header h1 { font-size: 16px; margin-right: 8px; }
+  .stat { font-size: 13px; color: var(--texto2); }
+  .stat b { color: var(--texto); font-size: 15px; display: block; }
+  .ganho { color: var(--verde) !important; } .perda { color: var(--vermelho) !important; }
+  main { display: grid; grid-template-columns: 1fr 380px; gap: 12px; padding: 12px; }
+  .cartao { background: var(--painel); border: 1px solid var(--borda); border-radius: 8px; padding: 12px; }
+  .barra-grafico { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  input, select, button {
+    background: #0d1117; color: var(--texto); border: 1px solid var(--borda);
+    border-radius: 6px; padding: 7px 10px; font-size: 13px;
+  }
+  input:focus, select:focus { outline: 1px solid var(--azul); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--texto2); }
+  .tf-botao.ativo { background: var(--azul); border-color: var(--azul); }
+  #grafico { height: 480px; }
+  .score-painel { display: none; margin-top: 8px; padding: 10px; background: #0d1117;
+                  border: 1px solid var(--borda); border-radius: 6px; font-size: 13px; }
+  .score-linha { display: flex; gap: 16px; margin-bottom: 6px; align-items: center; }
+  .selo { padding: 2px 10px; border-radius: 10px; font-weight: 600; font-size: 12px; }
+  .criterio { color: var(--texto2); }
+  .varr-linha { display: flex; justify-content: space-between; align-items: center;
+                padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .varr-linha:hover { background: #21262d; }
+  .varr-linha.melhor { border: 1px solid var(--amarelo); }
+  .varr-dir { font-weight: 700; width: 84px; }
+  .varr-score { font-weight: 700; }
+  .consenso { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: #21262d; }
+  .consenso.forte { background: var(--amarelo); color: #1a1a1a; font-weight: 700; }
+  .varr-estr { color: var(--texto2); font-size: 11.5px; }
+  .criterio.sim { color: var(--texto); }
+  .criterio.sim::before { content: "✔ "; color: var(--verde); }
+  .criterio:not(.sim)::before { content: "✖ "; color: var(--texto2); }
+  h2 { font-size: 14px; margin-bottom: 10px; color: var(--texto2);
+       text-transform: uppercase; letter-spacing: .5px; }
+  .formulario { display: grid; gap: 8px; }
+  .dupla { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .dir-botoes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .dir-botoes button { font-weight: 700; padding: 10px; }
+  #botao-compra.ativo { background: var(--verde); border-color: var(--verde); }
+  #botao-venda.ativo { background: var(--vermelho); border-color: var(--vermelho); }
+  label { font-size: 12px; color: var(--texto2); }
+  #abrir-botao { padding: 11px; font-weight: 700; font-size: 14px; }
+  #abrir-botao.compra { background: var(--verde); border-color: var(--verde); }
+  #abrir-botao.venda { background: var(--vermelho); border-color: var(--vermelho); }
+  .posicao { border: 1px solid var(--borda); border-radius: 6px; padding: 10px; margin-bottom: 8px; font-size: 13px; }
+  .posicao .topo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .posicao .pnl { font-size: 16px; font-weight: 700; }
+  .posicao .detalhes { color: var(--texto2); font-size: 12px; }
+  .posicao button { margin-top: 8px; width: 100%; padding: 6px; }
+  .hist-item { display: flex; justify-content: space-between; padding: 6px 0;
+               border-bottom: 1px solid var(--borda); font-size: 12.5px; }
+  .vazio { color: var(--texto2); font-size: 13px; padding: 8px 0; }
+  #aviso { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+           background: var(--painel); border: 1px solid var(--borda); border-radius: 8px;
+           padding: 12px 20px; display: none; max-width: 90%; z-index: 10; }
+  .rodape { grid-column: 1 / -1; color: var(--texto2); font-size: 12px; text-align: center; padding: 4px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 Simulador de Trades</h1>
+  <div class="stat">Saldo livre<b id="saldo">—</b></div>
+  <div class="stat">Patrimônio total<b id="patrimonio">—</b></div>
+  <div class="stat">Retorno<b id="retorno">—</b></div>
+  <div class="stat">Acerto (fechadas)<b id="acerto">—</b></div>
+  <button id="reset" style="margin-left:auto" title="Zera a carteira para 10.000 USDT">Reiniciar carteira</button>
+</header>
+
+<main>
+  <section class="cartao">
+    <div class="barra-grafico">
+      <input id="simbolo" list="lista-pares" value="BTCUSDT" style="width:130px" title="Par">
+      <datalist id="lista-pares"></datalist>
+      <span id="tfs"></span>
+      <select id="estrategia">
+        <option value="confluencia">Confluência</option>
+        <option value="tendencia_pa">Tendência + Price Action</option>
+        <option value="reversao">Reversão à média</option>
+        <option value="rompimento">Rompimento</option>
+      </select>
+      <button id="analisar">Analisar estratégia</button>
+      <button id="varrer" title="Analisa as 25 maiores criptos com a estratégia e o timeframe selecionados e ranqueia os melhores gráficos">🔍 Varrer top 25</button>
+      <button id="varrer-todas" title="Roda TODAS as 4 estratégias em cada uma das 25 maiores criptos e mostra os melhores sinais e o consenso entre as estratégias">🎯 Varrer (todas estratégias)</button>
+      <b id="preco-ao-vivo" style="margin-left:auto;font-size:16px"></b>
+    </div>
+    <div id="grafico"></div>
+    <div class="score-painel" id="varredura-painel">
+      <div id="varredura-cabecalho" style="margin-bottom:8px"></div>
+      <div id="varredura-lista"></div>
+    </div>
+    <div class="score-painel" id="score-painel">
+      <div class="score-linha">
+        <span class="selo" id="selo-compra">COMPRA —</span>
+        <span class="selo" id="selo-venda">VENDA —</span>
+        <span id="score-info" class="criterio"></span>
+      </div>
+      <div id="criterios"></div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="cartao" style="margin-bottom:12px">
+      <h2>Nova operação — <span id="simbolo-form">BTCUSDT</span></h2>
+      <div class="formulario">
+        <div class="dir-botoes">
+          <button id="botao-compra" class="ativo">COMPRA ▲</button>
+          <button id="botao-venda">VENDA ▼</button>
+        </div>
+        <div class="dupla">
+          <div><label>Margem (USDT fictício)</label><input id="margem" type="number" value="100" min="1" style="width:100%"></div>
+          <div><label>Alavancagem: <b id="alav-rotulo">1x</b></label>
+               <input id="alavancagem" type="range" min="1" max="25" value="1" style="width:100%"></div>
+        </div>
+        <div class="criterio" id="nocional">Posição: 100 USDT</div>
+        <div class="dupla">
+          <div><label>Stop loss (opcional)</label><input id="stop" type="number" step="any" style="width:100%"></div>
+          <div><label>Alvo (opcional)</label><input id="alvo" type="number" step="any" style="width:100%"></div>
+        </div>
+        <button id="sugerir" title="Stop 2×ATR e alvo 1×ATR — a configuração aprovada no laboratório">Sugerir stop/alvo pela estratégia</button>
+        <button id="abrir-botao" class="compra">ABRIR COMPRA</button>
+      </div>
+    </div>
+
+    <div class="cartao" style="margin-bottom:12px">
+      <h2>Posições abertas</h2>
+      <div id="posicoes"><div class="vazio">Nenhuma posição aberta.</div></div>
+    </div>
+
+    <div class="cartao">
+      <h2>Histórico (<span id="total-fechadas">0</span> fechadas)</h2>
+      <div id="historico"><div class="vazio">Nenhuma operação fechada ainda.</div></div>
+    </div>
+  </aside>
+
+  <div class="rodape">
+    Simulação com USDT fictício — preços reais da Binance · taxa 0,05% por lado ·
+    liquidação simplificada (margem isolada) · stop/alvo executados também com o simulador fechado.
+    Paper trading é treino: lucro aqui não garante lucro real.
+  </div>
+</main>
+<div id="aviso"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let simbolo = "BTCUSDT", tf = "4h", direcao = "COMPRA";
+let chart, serie, linhasPreco = [], ultimaAnalise = null;
+
+function fmt(x, casas) {
+  if (x === null || x === undefined || isNaN(x)) return "—";
+  return Number(x).toLocaleString("pt-BR", casas !== undefined
+    ? { minimumFractionDigits: casas, maximumFractionDigits: casas }
+    : { maximumSignificantDigits: 6 });
+}
+function avisar(msg, erro) {
+  const a = $("aviso");
+  a.textContent = msg;
+  a.style.borderColor = erro ? "var(--vermelho)" : "var(--verde)";
+  a.style.display = "block";
+  clearTimeout(a._t);
+  a._t = setTimeout(() => a.style.display = "none", 5000);
+}
+async function api(rota, corpo) {
+  const r = await fetch(rota, corpo
+    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) }
+    : undefined);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.erro || "Erro desconhecido");
+  return j;
+}
+
+// ----------------------- gráfico -----------------------
+function criarGrafico() {
+  chart = LightweightCharts.createChart($("grafico"), {
+    layout: { background: { color: "#0d1117" }, textColor: "#8b949e" },
+    grid: { vertLines: { color: "#21262d" }, horzLines: { color: "#21262d" } },
+    timeScale: { timeVisible: true, borderColor: "#30363d" },
+    rightPriceScale: { borderColor: "#30363d" },
+  });
+  serie = chart.addCandlestickSeries({
+    upColor: "#2ea043", downColor: "#da3633",
+    wickUpColor: "#2ea043", wickDownColor: "#da3633", borderVisible: false,
+  });
+  new ResizeObserver(() => chart.applyOptions({ width: $("grafico").clientWidth }))
+    .observe($("grafico"));
+}
+async function carregarCandles() {
+  try {
+    const dados = await api(`/api/klines?simbolo=${simbolo}&tf=${tf}&limite=400`);
+    serie.setData(dados);
+    chart.timeScale().fitContent();
+    if (dados.length) $("preco-ao-vivo").textContent = fmt(dados[dados.length - 1].close) + " USDT";
+  } catch (e) { avisar("Falha ao carregar o gráfico: " + e.message, true); }
+}
+async function atualizarCandles() {
+  try {
+    const dados = await api(`/api/klines?simbolo=${simbolo}&tf=${tf}&limite=2`);
+    dados.forEach(c => serie.update(c));
+    if (dados.length) {
+      const ultimo = dados[dados.length - 1].close;
+      $("preco-ao-vivo").textContent = fmt(ultimo) + " USDT";
+      $("preco-ao-vivo").style.color = dados[dados.length - 1].close >= dados[dados.length - 1].open
+        ? "var(--verde)" : "var(--vermelho)";
+    }
+  } catch (e) { /* tenta de novo no próximo ciclo */ }
+}
+function desenharLinhas(posicoes) {
+  linhasPreco.forEach(l => serie.removePriceLine(l));
+  linhasPreco = [];
+  posicoes.filter(p => p.simbolo === simbolo).forEach(p => {
+    const cor = p.direcao === "COMPRA" ? "#2ea043" : "#da3633";
+    linhasPreco.push(serie.createPriceLine({ price: p.entrada, color: cor, lineWidth: 2,
+      title: `${p.direcao} ${p.alavancagem}x` }));
+    if (p.stop) linhasPreco.push(serie.createPriceLine({ price: p.stop, color: "#d29922",
+      lineStyle: LightweightCharts.LineStyle.Dashed, title: "stop" }));
+    if (p.alvo) linhasPreco.push(serie.createPriceLine({ price: p.alvo, color: "#316dca",
+      lineStyle: LightweightCharts.LineStyle.Dashed, title: "alvo" }));
+    if (p.alavancagem > 1) linhasPreco.push(serie.createPriceLine({ price: p.liquidacao,
+      color: "#f85149", lineStyle: LightweightCharts.LineStyle.Dotted, title: "liquidação" }));
+  });
+}
+
+// ----------------------- conta -----------------------
+async function atualizarConta() {
+  try {
+    const c = await api("/api/conta");
+    $("saldo").textContent = fmt(c.saldo, 2) + " USDT";
+    $("patrimonio").textContent = fmt(c.patrimonio, 2) + " USDT";
+    $("retorno").textContent = (c.retorno_pct >= 0 ? "+" : "") + fmt(c.retorno_pct, 2) + "%";
+    $("retorno").className = c.retorno_pct >= 0 ? "ganho" : "perda";
+    $("acerto").textContent = c.total_fechadas ? fmt(c.taxa_acerto, 0) + "%" : "—";
+    $("total-fechadas").textContent = c.total_fechadas;
+
+    $("posicoes").innerHTML = c.posicoes.length ? "" : '<div class="vazio">Nenhuma posição aberta.</div>';
+    c.posicoes.forEach(p => {
+      const div = document.createElement("div");
+      div.className = "posicao";
+      const cor = p.pnl >= 0 ? "ganho" : "perda";
+      div.innerHTML = `
+        <div class="topo">
+          <b>${p.simbolo} · ${p.direcao} ${p.alavancagem}x</b>
+          <span class="pnl ${cor}">${p.pnl >= 0 ? "+" : ""}${fmt(p.pnl, 2)} USDT (${fmt(p.pnl_pct, 1)}%)</span>
+        </div>
+        <div class="detalhes">
+          margem ${fmt(p.margem, 2)} · entrada ${fmt(p.entrada)} · atual ${fmt(p.preco_atual)}<br>
+          stop ${fmt(p.stop)} · alvo ${fmt(p.alvo)} · liq. ${p.alavancagem > 1 ? fmt(p.liquidacao) : "—"}
+        </div>
+        <button data-id="${p.id}">Fechar posição</button>`;
+      div.querySelector("button").onclick = async ev => {
+        ev.target.disabled = true;
+        try {
+          const r = await api("/api/fechar", { id: p.id });
+          avisar(`Fechada: ${r.simbolo} ${r.direcao} → ${r.resultado >= 0 ? "+" : ""}${fmt(r.resultado, 2)} USDT`);
+          atualizarConta();
+        } catch (e) { avisar(e.message, true); ev.target.disabled = false; }
+      };
+      $("posicoes").appendChild(div);
+    });
+
+    $("historico").innerHTML = c.historico.length ? "" : '<div class="vazio">Nenhuma operação fechada ainda.</div>';
+    c.historico.forEach(r => {
+      const div = document.createElement("div");
+      div.className = "hist-item";
+      const cor = r.resultado >= 0 ? "ganho" : "perda";
+      div.innerHTML = `<span>${r.simbolo} ${r.direcao} ${r.alavancagem}x
+        <span class="criterio">· ${r.motivo.toLowerCase()}</span></span>
+        <b class="${cor}">${r.resultado >= 0 ? "+" : ""}${fmt(r.resultado, 2)}</b>`;
+      $("historico").appendChild(div);
+    });
+
+    desenharLinhas(c.posicoes);
+  } catch (e) { /* tenta no próximo ciclo */ }
+}
+
+// ----------------------- análise -----------------------
+async function analisar() {
+  $("analisar").disabled = true;
+  $("analisar").textContent = "Analisando...";
+  try {
+    const a = await api(`/api/analise?simbolo=${simbolo}&tf=${tf}&estrategia=${$("estrategia").value}`);
+    ultimaAnalise = a;
+    $("score-painel").style.display = "block";
+    const sc = $("selo-compra"), sv = $("selo-venda");
+    sc.textContent = `COMPRA ${a.score_compra}/100`;
+    sv.textContent = `VENDA ${a.score_venda}/100`;
+    sc.style.background = a.score_compra >= 70 ? "var(--verde)" : "#21262d";
+    sv.style.background = a.score_venda >= 70 ? "var(--vermelho)" : "#21262d";
+    $("score-info").textContent =
+      `${a.estrategia} · direção dominante: ${a.direcao} (${a.forca}) · RSI ${fmt(a.rsi, 1)} · ADX ${fmt(a.adx, 1)}`;
+    $("criterios").innerHTML = a.criterios.map(cr =>
+      `<div class="criterio ${cr.atendido ? "sim" : ""}">(+${cr.pontos}) ${cr.descricao}</div>`).join("");
+  } catch (e) { avisar("Falha na análise: " + e.message, true); }
+  $("analisar").disabled = false;
+  $("analisar").textContent = "Analisar estratégia";
+}
+
+// ----------------------- varredura do mercado -----------------------
+async function varrer() {
+  const b = $("varrer");
+  b.disabled = true;
+  b.textContent = "Varrendo 25 pares... (até ~1 min)";
+  try {
+    const v = await api(`/api/varredura?tf=${tf}&estrategia=${$("estrategia").value}`);
+    const painel = $("varredura-painel");
+    painel.style.display = "block";
+    const lista = $("varredura-lista");
+    lista.innerHTML = "";
+
+    const melhor = v.resultados[0];
+    const nomeEstr = $("estrategia").selectedOptions[0].textContent;
+    if (!melhor || melhor.score < 55) {
+      $("varredura-cabecalho").innerHTML =
+        `<b>Nenhum gráfico bom agora</b> <span class="criterio">— dos ${v.avaliados} pares avaliados
+         (${nomeEstr}, ${tf}), nenhum atingiu confluência suficiente. Não force operação.</span>`;
+    } else {
+      $("varredura-cabecalho").innerHTML =
+        `<b>🏆 Melhor gráfico: ${melhor.simbolo}</b> — ${melhor.direcao}, score
+         ${melhor.score}/100 (${melhor.forca}) <span class="criterio">· ${nomeEstr} · ${tf}
+         · clique em um par para abrir o gráfico com a análise</span>`;
+    }
+
+    v.resultados.slice(0, 10).forEach((r, i) => {
+      const div = document.createElement("div");
+      div.className = "varr-linha" + (i === 0 && r.score >= 55 ? " melhor" : "");
+      const corDir = r.direcao === "COMPRA" ? "var(--verde)" : "var(--vermelho)";
+      const corScore = r.score >= 70 ? "var(--amarelo)" : (r.score >= 55 ? "var(--texto)" : "var(--texto2)");
+      div.innerHTML = `
+        <b style="width:110px">${r.simbolo}</b>
+        <span class="varr-dir" style="color:${corDir}">${r.direcao}</span>
+        <span class="varr-score" style="color:${corScore}">${r.score}/100 ${r.forca}</span>
+        <span class="criterio">RSI ${fmt(r.rsi, 0)} · ADX ${fmt(r.adx, 0)}</span>
+        <span>${fmt(r.preco)}</span>`;
+      div.onclick = () => {
+        $("simbolo").value = r.simbolo;
+        trocarPar();
+        definirDirecao(r.direcao);
+        analisar();
+      };
+      lista.appendChild(div);
+    });
+  } catch (e) { avisar("Falha na varredura: " + e.message, true); }
+  b.disabled = false;
+  b.textContent = "🔍 Varrer top 25";
+}
+
+async function varrerTodas() {
+  const b = $("varrer-todas");
+  b.disabled = true;
+  b.textContent = "Varrendo 25 pares × 4 estratégias...";
+  try {
+    const v = await api(`/api/varredura_total?tf=${tf}`);
+    const painel = $("varredura-painel");
+    painel.style.display = "block";
+    const lista = $("varredura-lista");
+    lista.innerHTML = "";
+
+    const melhor = v.resultados[0];
+    if (!melhor || melhor.score < 55) {
+      $("varredura-cabecalho").innerHTML =
+        `<b>Nenhum sinal bom agora</b> <span class="criterio">— rodei as 4 estratégias nos
+         ${v.avaliados} maiores pares (${tf}) e nenhuma combinação atingiu confluência. Não force operação.</span>`;
+    } else {
+      $("varredura-cabecalho").innerHTML =
+        `<b>🎯 Melhor oportunidade: ${melhor.simbolo}</b> — ${melhor.direcao}, score ${melhor.score}/100
+         · ${melhor.consenso}/${melhor.total} estratégias concordam
+         <span class="criterio">· ${tf} · ordenado por consenso · clique para abrir o gráfico</span>`;
+    }
+
+    v.resultados.slice(0, 12).forEach((r, i) => {
+      const div = document.createElement("div");
+      div.className = "varr-linha" + (i === 0 && r.score >= 55 ? " melhor" : "");
+      const corDir = r.direcao === "COMPRA" ? "var(--verde)" : "var(--vermelho)";
+      const corScore = r.score >= 70 ? "var(--amarelo)" : (r.score >= 55 ? "var(--texto)" : "var(--texto2)");
+      const consClasse = r.consenso >= 3 ? "consenso forte" : "consenso";
+      div.innerHTML = `
+        <b style="width:104px">${r.simbolo}</b>
+        <span class="varr-dir" style="color:${corDir}">${r.direcao}</span>
+        <span class="varr-score" style="color:${corScore}">${r.score}/100</span>
+        <span class="${consClasse}" title="Estratégias que concordam com a direção">${r.consenso}/${r.total} ✓</span>
+        <span class="varr-estr">via ${nomeCurto(r.estrategia)}</span>
+        <span>${fmt(r.preco)}</span>`;
+      div.title = r.detalhe.map(d => `${nomeCurto(d.estrategia)}: ${d.direcao} ${d.score}`).join("  |  ");
+      div.onclick = () => {
+        $("simbolo").value = r.simbolo;
+        $("estrategia").value = r.estrategia;
+        trocarPar();
+        definirDirecao(r.direcao);
+        analisar();
+      };
+      lista.appendChild(div);
+    });
+  } catch (e) { avisar("Falha na varredura: " + e.message, true); }
+  b.disabled = false;
+  b.textContent = "🎯 Varrer (todas estratégias)";
+}
+function nomeCurto(nome) {
+  return { confluencia: "Confluência", tendencia_pa: "Tend+PA",
+           reversao: "Reversão", rompimento: "Rompimento" }[nome] || nome;
+}
+
+// ----------------------- formulário -----------------------
+function atualizarFormulario() {
+  $("alav-rotulo").textContent = $("alavancagem").value + "x";
+  const nocional = (parseFloat($("margem").value) || 0) * parseInt($("alavancagem").value);
+  $("nocional").textContent = `Posição: ${fmt(nocional, 2)} USDT` +
+    ($("alavancagem").value > 1 ? ` · queda de ${fmt(100 / $("alavancagem").value, 1)}% contra você = liquidação` : "");
+  const b = $("abrir-botao");
+  b.textContent = "ABRIR " + direcao;
+  b.className = direcao === "COMPRA" ? "compra" : "venda";
+}
+function definirDirecao(d) {
+  direcao = d;
+  $("botao-compra").classList.toggle("ativo", d === "COMPRA");
+  $("botao-venda").classList.toggle("ativo", d === "VENDA");
+  atualizarFormulario();
+}
+async function abrirPosicao() {
+  const b = $("abrir-botao");
+  b.disabled = true;
+  try {
+    const p = await api("/api/abrir", {
+      simbolo, direcao,
+      margem: $("margem").value,
+      alavancagem: $("alavancagem").value,
+      stop: $("stop").value || null,
+      alvo: $("alvo").value || null,
+    });
+    avisar(`Aberta: ${p.simbolo} ${p.direcao} ${p.alavancagem}x @ ${fmt(p.entrada)}`);
+    $("stop").value = ""; $("alvo").value = "";
+    atualizarConta();
+  } catch (e) { avisar(e.message, true); }
+  b.disabled = false;
+}
+async function sugerirNiveis() {
+  if (!ultimaAnalise || ultimaAnalise.simbolo_ref !== simbolo + tf) {
+    await analisar();
+    if (ultimaAnalise) ultimaAnalise.simbolo_ref = simbolo + tf;
+  }
+  if (!ultimaAnalise) return;
+  const preco = ultimaAnalise.preco, atr = ultimaAnalise.atr;
+  if (direcao === "COMPRA") {
+    $("stop").value = (preco - 2 * atr).toPrecision(6);
+    $("alvo").value = (preco + 1 * atr).toPrecision(6);
+  } else {
+    $("stop").value = (preco + 2 * atr).toPrecision(6);
+    $("alvo").value = (preco - 1 * atr).toPrecision(6);
+  }
+  avisar("Stop 2×ATR e alvo 1×ATR preenchidos (configuração aprovada no laboratório).");
+}
+
+// ----------------------- troca de par / timeframe -----------------------
+function trocarPar() {
+  simbolo = $("simbolo").value.toUpperCase().trim();
+  $("simbolo-form").textContent = simbolo;
+  ultimaAnalise = null;
+  $("score-painel").style.display = "none";
+  carregarCandles().then(atualizarConta);
+}
+const TFS = ["15m", "1h", "4h", "1d"];
+function montarTfs() {
+  TFS.forEach(t => {
+    const b = document.createElement("button");
+    b.textContent = t;
+    b.className = "tf-botao" + (t === tf ? " ativo" : "");
+    b.onclick = () => {
+      tf = t;
+      document.querySelectorAll(".tf-botao").forEach(x => x.classList.toggle("ativo", x.textContent === t));
+      ultimaAnalise = null;
+      carregarCandles();
+    };
+    $("tfs").appendChild(b);
+  });
+}
+
+// ----------------------- inicialização -----------------------
+criarGrafico();
+montarTfs();
+carregarCandles();
+atualizarConta();
+api("/api/pares").then(ps =>
+  $("lista-pares").innerHTML = ps.map(p => `<option value="${p}">`).join("")).catch(() => {});
+setInterval(atualizarCandles, 4000);
+setInterval(atualizarConta, 6000);
+
+$("simbolo").addEventListener("change", trocarPar);
+$("botao-compra").onclick = () => definirDirecao("COMPRA");
+$("botao-venda").onclick = () => definirDirecao("VENDA");
+$("margem").oninput = atualizarFormulario;
+$("alavancagem").oninput = atualizarFormulario;
+$("abrir-botao").onclick = abrirPosicao;
+$("sugerir").onclick = sugerirNiveis;
+$("analisar").onclick = analisar;
+$("varrer").onclick = varrer;
+$("varrer-todas").onclick = varrerTodas;
+$("reset").onclick = async () => {
+  if (confirm("Zerar a carteira e apagar todo o histórico? (volta para 10.000 USDT)")) {
+    await api("/api/reset", {});
+    avisar("Carteira reiniciada com 10.000 USDT fictícios.");
+    atualizarConta();
+  }
+};
+atualizarFormulario();
+</script>
+</body>
+</html>

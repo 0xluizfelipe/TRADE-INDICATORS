@@ -1,0 +1,21 @@
+# Dados de runtime do simulador (a carteira "real" fica em %LOCALAPPDATA%)
+carteira.json
+carteira.tmp
+*.tmp
+
+# Configurações locais do Claude Code (específicas desta máquina)
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Sistema operacional / editores
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
