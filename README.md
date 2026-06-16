@@ -112,6 +112,18 @@ São quatro, todas combinando indicadores e price action por pontuação (0 a 10
 | `tendencia_pa` | Pullback na média com padrão de candle | Estrutura de topos/fundos, EMA21/50, engolfo/martelo |
 | `reversao` | Reversão à média em extremos | RSI < 30 / > 70, Bollinger, suporte/resistência, padrão de candle |
 | `rompimento` | Rompimento de 20 candles com força | Máx/mín de 20, volume 1,5x, ADX > 25 |
+| `divergencia` | Divergência RSI x preço + confirmação | Divergência regular, candle de reversão, nível, MACD, volume |
+| `fibonacci` | Pullback na zona de ouro (50–61,8%) a favor da tendência | Retração de Fibonacci do último swing, estrutura, candle |
+| `tendencia_ema` | Pullback na EMA10 com volume contraído (estratégia "10 EMA") | EMA10 vs EMA50, pullback, volume fraco na correção, candle |
+
+> **O que o laboratório revelou (jun/2026, top 5 por volume):** no 4h, a estratégia
+> `divergencia` foi a melhor de todas — **72,7% de acerto fora da amostra com fator de
+> lucro até 2,37** (stop 1,5×ATR, alvo 1,5×ATR, limiar 85), superando a `confluencia`.
+> Já a `fibonacci` e a `tendencia_ema` (a famosa "estratégia 10 EMA" de 857%) **não se
+> sustentaram fora da amostra** (fator de lucro < 1 nos dois timeframes): geram muitos
+> sinais, mas perdem dinheiro. Elas continuam no sistema como insumo para a varredura
+> por consenso e para reteste futuro — mas **não opere isoladamente o que não validar
+> no seu próprio laboratório.** Rode `python laboratorio.py ...` com dados atuais.
 
 O price action (`cripto/priceaction.py`) detecta: martelo, estrela cadente,
 engolfo de alta/baixa, estrutura de mercado (topos e fundos ascendentes ou

@@ -97,6 +97,9 @@
         <option value="tendencia_pa">Tendência + Price Action</option>
         <option value="reversao">Reversão à média</option>
         <option value="rompimento">Rompimento</option>
+        <option value="divergencia">Divergência RSI</option>
+        <option value="fibonacci">Fibonacci (golden zone)</option>
+        <option value="tendencia_ema">Tendência EMA10</option>
       </select>
       <button id="analisar">Analisar estratégia</button>
       <button id="varrer" title="Analisa as 25 maiores criptos com a estratégia e o timeframe selecionados e ranqueia os melhores gráficos">🔍 Varrer top 25</button>
@@ -414,7 +417,9 @@ async function varrerTodas() {
 }
 function nomeCurto(nome) {
   return { confluencia: "Confluência", tendencia_pa: "Tend+PA",
-           reversao: "Reversão", rompimento: "Rompimento" }[nome] || nome;
+           reversao: "Reversão", rompimento: "Rompimento",
+           divergencia: "Divergência", fibonacci: "Fibonacci",
+           tendencia_ema: "EMA10" }[nome] || nome;
 }
 
 // ----------------------- formulário -----------------------

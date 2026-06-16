@@ -69,6 +69,7 @@ def adicionar_indicadores(df: pd.DataFrame) -> pd.DataFrame:
     fechamento = df["fechamento"]
 
     df["ema9"] = ema(fechamento, 9)
+    df["ema10"] = ema(fechamento, 10)  # "linha de controle institucional" da estratégia 10 EMA
     df["ema21"] = ema(fechamento, 21)
     df["ema50"] = ema(fechamento, 50)
     df["ema200"] = ema(fechamento, 200)

@@ -84,9 +84,18 @@ def _bollinger_reversao(df, alta: bool) -> pd.Series:
 
 
 def _padrao_candle(df, alta: bool) -> pd.Series:
-    if alta:
-        return _recente(df["pa_martelo"] | df["pa_engolfo_alta"], 2)
-    return _recente(df["pa_estrela"] | df["pa_engolfo_baixa"], 2)
+    """Qualquer padrão de candle de reversão (martelo, engolfo, harami, estrela etc.)."""
+    return _recente(df["pa_reversao_alta" if alta else "pa_reversao_baixa"], 2)
+
+
+def _divergencia(df, alta: bool) -> pd.Series:
+    """Divergência regular RSI x preço nos últimos candles (sinal de reversão)."""
+    return _recente(df["pa_div_alta" if alta else "pa_div_baixa"], 5)
+
+
+def _fib_zona(df, alta: bool) -> pd.Series:
+    """Preço na zona de ouro de Fibonacci (50%–61,8%) do último swing."""
+    return _recente(df["pa_fib_long" if alta else "pa_fib_short"], 3)
 
 
 def _pullback_media(df, alta: bool) -> pd.Series:
@@ -96,6 +105,15 @@ def _pullback_media(df, alta: bool) -> pd.Series:
         return tocou & (df["fechamento"] > df["ema21"])
     tocou = _recente((df["maxima"] >= df["ema21"]) | (df["maxima"] >= df["ema50"]))
     return tocou & (df["fechamento"] < df["ema21"])
+
+
+def _pullback_ema10(df, alta: bool) -> pd.Series:
+    """Pullback até a EMA10 e fechamento retomando a tendência (estratégia 10 EMA)."""
+    if alta:
+        tocou = _recente(df["minima"] <= df["ema10"])
+        return tocou & (df["fechamento"] > df["ema10"])
+    tocou = _recente(df["maxima"] >= df["ema10"])
+    return tocou & (df["fechamento"] < df["ema10"])
 
 
 def _perto_nivel(df, alta: bool) -> pd.Series:
@@ -226,6 +244,84 @@ _registrar(Estrategia(
         Criterio("estrutura", 20, "Estrutura de mercado na direção do rompimento",
                  lambda df, ctx: df["pa_estrutura_alta"],
                  lambda df, ctx: df["pa_estrutura_baixa"]),
+    ],
+))
+
+_registrar(Estrategia(
+    nome="divergencia",
+    titulo="Divergência RSI + confirmação de price action",
+    criterios=[
+        Criterio("divergencia", 25, "Divergência regular RSI x preço",
+                 lambda df, ctx: _divergencia(df, True),
+                 lambda df, ctx: _divergencia(df, False)),
+        Criterio("padrao_candle", 20, "Padrão de candle de reversão",
+                 lambda df, ctx: _padrao_candle(df, True),
+                 lambda df, ctx: _padrao_candle(df, False)),
+        Criterio("nivel", 15, "Reagindo em suporte/resistência confirmado",
+                 lambda df, ctx: _perto_nivel(df, True),
+                 lambda df, ctx: _perto_nivel(df, False)),
+        Criterio("rsi_zona", 15, "RSI saindo de zona extrema",
+                 lambda df, ctx: _recente(df["rsi"] < 35),
+                 lambda df, ctx: _recente(df["rsi"] > 65)),
+        Criterio("macd_cruzamento", 15, "Cruzamento do MACD a favor",
+                 lambda df, ctx: _cruz_macd(df, True),
+                 lambda df, ctx: _cruz_macd(df, False)),
+        Criterio("volume", 10, "Volume acima da média",
+                 lambda df, ctx: _volume_acima(df, 1.2),
+                 lambda df, ctx: _volume_acima(df, 1.2)),
+    ],
+))
+
+_registrar(Estrategia(
+    nome="fibonacci",
+    titulo="Retração de Fibonacci (zona de ouro 50%–61,8%)",
+    criterios=[
+        Criterio("ctx_tendencia", 15, "Tendência do timeframe maior a favor",
+                 lambda df, ctx: ctx["fechamento"] > ctx["ema200"],
+                 lambda df, ctx: ctx["fechamento"] < ctx["ema200"]),
+        Criterio("fib_zona", 30, "Preço na zona de ouro de Fibonacci do último swing",
+                 lambda df, ctx: _fib_zona(df, True),
+                 lambda df, ctx: _fib_zona(df, False)),
+        Criterio("estrutura", 15, "Estrutura de mercado a favor",
+                 lambda df, ctx: df["pa_estrutura_alta"],
+                 lambda df, ctx: df["pa_estrutura_baixa"]),
+        Criterio("padrao_candle", 20, "Padrão de candle de reversão na zona",
+                 lambda df, ctx: _padrao_candle(df, True),
+                 lambda df, ctx: _padrao_candle(df, False)),
+        Criterio("adx_forca", 10, "ADX > 20 (tendência com força)",
+                 lambda df, ctx: df["adx"] > 20,
+                 lambda df, ctx: df["adx"] > 20),
+        Criterio("volume", 10, "Volume acima da média",
+                 lambda df, ctx: _volume_acima(df, 1.2),
+                 lambda df, ctx: _volume_acima(df, 1.2)),
+    ],
+))
+
+_registrar(Estrategia(
+    nome="tendencia_ema",
+    titulo="Tendência com EMA10 e volume contraído no pullback",
+    criterios=[
+        Criterio("ctx_tendencia", 15, "Tendência do timeframe maior a favor",
+                 lambda df, ctx: ctx["fechamento"] > ctx["ema200"],
+                 lambda df, ctx: ctx["fechamento"] < ctx["ema200"]),
+        Criterio("tendencia_local", 15, "EMA10 a favor da EMA50",
+                 lambda df, ctx: df["ema10"] > df["ema50"],
+                 lambda df, ctx: df["ema10"] < df["ema50"]),
+        Criterio("pullback_ema10", 20, "Pullback até a EMA10 com retomada no fechamento",
+                 lambda df, ctx: _pullback_ema10(df, True),
+                 lambda df, ctx: _pullback_ema10(df, False)),
+        Criterio("volume_contraido", 15, "Volume do pullback abaixo da média (correção fraca)",
+                 lambda df, ctx: _recente(df["pa_volume_contraido"]),
+                 lambda df, ctx: _recente(df["pa_volume_contraido"])),
+        Criterio("estrutura", 15, "Estrutura de mercado a favor",
+                 lambda df, ctx: df["pa_estrutura_alta"],
+                 lambda df, ctx: df["pa_estrutura_baixa"]),
+        Criterio("padrao_candle", 10, "Candle de continuação/retomada",
+                 lambda df, ctx: _padrao_candle(df, True),
+                 lambda df, ctx: _padrao_candle(df, False)),
+        Criterio("adx_forca", 10, "ADX > 20 (tendência com força)",
+                 lambda df, ctx: df["adx"] > 20,
+                 lambda df, ctx: df["adx"] > 20),
     ],
 ))
 
