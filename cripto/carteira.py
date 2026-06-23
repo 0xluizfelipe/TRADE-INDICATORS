@@ -30,6 +30,11 @@ SALDO_INICIAL = 10_000.0
 TAXA = 0.0005  # 0,05% por lado
 ALAVANCAGEM_MAXIMA = 25
 
+# --- Limites de gestão de risco (baseados na prática das mesas profissionais) ---
+RISCO_MAX_PCT = 2.0        # risco recomendado por operação: 1–2% do capital
+ALAVANCAGEM_ALERTA = 10    # liquidações de varejo concentram-se em 10x+
+EXPOSICAO_MAX_PCT = 40.0   # exposição máx. recomendada na mesma direção (% do capital)
+
 _trava = threading.Lock()
 
 
@@ -78,6 +83,10 @@ class Carteira:
 
     # ------------------------- operações -------------------------
 
+    def _equity_base(self) -> float:
+        """Capital de referência (custo): saldo livre + margens presas nas posições."""
+        return self.saldo + sum(p["margem"] for p in self.posicoes)
+
     def abrir(self, simbolo: str, direcao: str, margem: float, alavancagem: int,
               stop: float | None = None, alvo: float | None = None) -> dict:
         simbolo = simbolo.upper()
@@ -89,6 +98,12 @@ class Carteira:
             raise ValueError(f"Alavancagem deve estar entre 1 e {ALAVANCAGEM_MAXIMA}x.")
         if margem <= 0:
             raise ValueError("Margem deve ser maior que zero.")
+        # GUARDRAIL nº1: alavancagem sem stop é a forma mais rápida de quebrar a conta.
+        if alavancagem > 1 and stop is None:
+            raise ValueError(
+                f"Posição alavancada ({alavancagem}x) exige stop loss. "
+                "Defina um stop (use 'Sugerir stop/alvo') antes de abrir — "
+                "operar alavancado sem stop é a causa nº1 de liquidação.")
 
         preco = dados.preco_atual(simbolo)
         quantidade = margem * alavancagem / preco
@@ -113,6 +128,31 @@ class Carteira:
                 if alvo is not None and not 0 < alvo < preco:
                     raise ValueError("Para VENDA o alvo deve ficar abaixo do preço atual.")
 
+            # --- Avaliação de risco (avisa, mas não bloqueia, exceto o stop acima) ---
+            equity = self._equity_base()
+            avisos: list[str] = []
+            risco_pct = None
+            if stop is not None:
+                risco_pct = 100 * quantidade * abs(preco - stop) / equity if equity > 0 else 0
+                if risco_pct > RISCO_MAX_PCT:
+                    avisos.append(
+                        f"Risco de {risco_pct:.1f}% do capital nesta operação "
+                        f"(o recomendado é até {RISCO_MAX_PCT:.0f}%).")
+            if alavancagem >= ALAVANCAGEM_ALERTA:
+                mov = 100 / alavancagem
+                avisos.append(
+                    f"Alavancagem alta ({alavancagem}x): um movimento de ~{mov:.1f}% "
+                    "contra você já liquida a posição.")
+            exposicao = margem + sum(p["margem"] for p in self.posicoes
+                                     if p["direcao"] == direcao)
+            exp_pct = 100 * exposicao / equity if equity > 0 else 0
+            mesma_direcao = sum(1 for p in self.posicoes if p["direcao"] == direcao)
+            if exp_pct > EXPOSICAO_MAX_PCT and mesma_direcao >= 1:
+                avisos.append(
+                    f"Exposição de {exp_pct:.0f}% do capital em {mesma_direcao + 1} posições "
+                    f"de {direcao} — cripto é correlacionada, então elas tendem a ganhar "
+                    "ou perder juntas (é quase uma aposta só, maior do que parece).")
+
             posicao = {
                 "id": uuid.uuid4().hex[:8],
                 "simbolo": simbolo,
@@ -125,13 +165,48 @@ class Carteira:
                 "alvo": alvo,
                 "liquidacao": liquidacao,
                 "taxa_paga": taxa_abertura,
+                "risco_pct": risco_pct,
                 "abertura_ms": _agora_ms(),
                 "ultimo_check_ms": _agora_ms(),
             }
             self.saldo -= margem + taxa_abertura
             self.posicoes.append(posicao)
             self.salvar()
-            return posicao
+            return {**posicao, "avisos": avisos}
+
+    def dimensionar(self, simbolo: str, direcao: str, risco_pct: float,
+                    stop: float, alavancagem: int) -> dict:
+        """Calcula a margem para arriscar exatamente `risco_pct`% do capital até o stop.
+
+        É a forma profissional de dimensionar: você decide quanto pode perder (risco),
+        e o tamanho da posição decorre disso — não o contrário.
+        """
+        direcao = direcao.upper()
+        alavancagem = int(alavancagem)
+        if not 1 <= alavancagem <= ALAVANCAGEM_MAXIMA:
+            raise ValueError(f"Alavancagem deve estar entre 1 e {ALAVANCAGEM_MAXIMA}x.")
+        if risco_pct <= 0:
+            raise ValueError("O risco por operação deve ser maior que zero.")
+        preco = dados.preco_atual(simbolo)
+        if direcao == "COMPRA" and not 0 < stop < preco:
+            raise ValueError("Para COMPRA o stop deve ficar abaixo do preço atual.")
+        if direcao == "VENDA" and stop <= preco:
+            raise ValueError("Para VENDA o stop deve ficar acima do preço atual.")
+
+        with _trava:
+            equity = self._equity_base()
+            saldo_livre = self.saldo
+        risco_usdt = risco_pct / 100 * equity
+        risco_unitario = abs(preco - stop)
+        quantidade = risco_usdt / risco_unitario
+        margem = quantidade * preco / alavancagem
+        limitada = margem > saldo_livre
+        if limitada:  # não dá pra arriscar tanto com o saldo atual
+            margem = saldo_livre * 0.98
+        return {
+            "preco": preco, "margem": round(margem, 2), "risco_usdt": round(risco_usdt, 2),
+            "risco_pct": risco_pct, "equity": round(equity, 2), "limitada_pelo_saldo": limitada,
+        }
 
     def _encerrar(self, posicao: dict, preco_saida: float, motivo: str, quando_ms: int):
         sinal = 1 if posicao["direcao"] == "COMPRA" else -1

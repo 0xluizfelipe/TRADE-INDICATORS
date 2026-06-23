@@ -140,6 +140,8 @@ def comando_backtest(args):
         risco_por_operacao=args.risco / 100,
         atr_stop=args.stop,
         atr_alvo=args.alvo,
+        slippage=args.slippage / 100,
+        funding_8h=args.funding / 100,
         permitir_venda=not args.sem_venda,
     )
 
@@ -148,6 +150,7 @@ def comando_backtest(args):
     print(f"  Estratégia: {args.estrategia}  |  Stop {args.stop:g}x ATR  |  Alvo {args.alvo:g}x ATR")
     print(f"  Período: {res.periodo_inicio:%d/%m/%Y} a {res.periodo_fim:%d/%m/%Y}")
     print(f"  Score mínimo: {args.limiar}  |  Risco por operação: {args.risco:.1f}%")
+    print(f"  Custos: taxa 0,1% + slippage {args.slippage:g}%/lado + funding {args.funding:g}%/8h")
     linha("=")
     if res.total == 0:
         print("  Nenhuma operação gerada no período (estratégia seletiva).")
@@ -199,6 +202,8 @@ def main():
     parser.add_argument("--limiar", type=int, default=estrategia.LIMIAR_FORTE)
     parser.add_argument("--stop", type=float, default=1.5, help="Stop em múltiplos de ATR")
     parser.add_argument("--alvo", type=float, default=3.0, help="Alvo em múltiplos de ATR")
+    parser.add_argument("--slippage", type=float, default=0.05, help="Slippage por lado, em %% (padrão 0,05)")
+    parser.add_argument("--funding", type=float, default=0.01, help="Funding a cada 8h, em %% (padrão 0,01)")
     parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--sem-venda", action="store_true")
     args = parser.parse_args()

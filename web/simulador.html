@@ -130,16 +130,20 @@
           <button id="botao-venda">VENDA ▼</button>
         </div>
         <div class="dupla">
+          <div><label>Stop loss <span id="stop-obrig" class="criterio"></span></label><input id="stop" type="number" step="any" style="width:100%"></div>
+          <div><label>Alvo</label><input id="alvo" type="number" step="any" style="width:100%"></div>
+        </div>
+        <button id="sugerir" title="Stop 2×ATR e alvo 1×ATR — a configuração aprovada no laboratório">Sugerir stop/alvo pela estratégia</button>
+        <div class="dupla">
+          <div><label>Risco por operação (%)</label><input id="risco-pct" type="number" value="1" min="0.1" step="0.1" style="width:100%"></div>
+          <div style="display:flex;align-items:flex-end"><button id="dimensionar" style="width:100%" title="Calcula a margem para arriscar essa % do capital até o stop — a forma profissional de dimensionar">Calcular margem pelo risco</button></div>
+        </div>
+        <div class="dupla">
           <div><label>Margem (USDT fictício)</label><input id="margem" type="number" value="100" min="1" style="width:100%"></div>
           <div><label>Alavancagem: <b id="alav-rotulo">1x</b></label>
                <input id="alavancagem" type="range" min="1" max="25" value="1" style="width:100%"></div>
         </div>
         <div class="criterio" id="nocional">Posição: 100 USDT</div>
-        <div class="dupla">
-          <div><label>Stop loss (opcional)</label><input id="stop" type="number" step="any" style="width:100%"></div>
-          <div><label>Alvo (opcional)</label><input id="alvo" type="number" step="any" style="width:100%"></div>
-        </div>
-        <button id="sugerir" title="Stop 2×ATR e alvo 1×ATR — a configuração aprovada no laboratório">Sugerir stop/alvo pela estratégia</button>
         <button id="abrir-botao" class="compra">ABRIR COMPRA</button>
       </div>
     </div>
@@ -174,13 +178,15 @@ function fmt(x, casas) {
     ? { minimumFractionDigits: casas, maximumFractionDigits: casas }
     : { maximumSignificantDigits: 6 });
 }
-function avisar(msg, erro) {
+function avisar(msg, tipo) {
+  if (tipo === true) tipo = "erro";  // compatibilidade com chamadas antigas
   const a = $("aviso");
   a.textContent = msg;
-  a.style.borderColor = erro ? "var(--vermelho)" : "var(--verde)";
+  a.style.borderColor = tipo === "erro" ? "var(--vermelho)"
+    : tipo === "aviso" ? "var(--amarelo)" : "var(--verde)";
   a.style.display = "block";
   clearTimeout(a._t);
-  a._t = setTimeout(() => a.style.display = "none", 5000);
+  a._t = setTimeout(() => a.style.display = "none", tipo === "aviso" ? 10000 : 5000);
 }
 async function api(rota, corpo) {
   const r = await fetch(rota, corpo
@@ -424,13 +430,39 @@ function nomeCurto(nome) {
 
 // ----------------------- formulário -----------------------
 function atualizarFormulario() {
-  $("alav-rotulo").textContent = $("alavancagem").value + "x";
-  const nocional = (parseFloat($("margem").value) || 0) * parseInt($("alavancagem").value);
-  $("nocional").textContent = `Posição: ${fmt(nocional, 2)} USDT` +
-    ($("alavancagem").value > 1 ? ` · queda de ${fmt(100 / $("alavancagem").value, 1)}% contra você = liquidação` : "");
+  const alav = parseInt($("alavancagem").value);
+  $("alav-rotulo").textContent = alav + "x";
+  const nocional = (parseFloat($("margem").value) || 0) * alav;
+  const noc = $("nocional");
+  noc.textContent = `Posição: ${fmt(nocional, 2)} USDT`
+    + (alav > 1 ? ` · queda de ${fmt(100 / alav, 1)}% contra você = liquidação` : "");
+  noc.style.color = alav >= 10 ? "var(--amarelo)" : "var(--texto2)";
+  $("stop-obrig").textContent = alav > 1 ? "(obrigatório)" : "(recomendado)";
   const b = $("abrir-botao");
   b.textContent = "ABRIR " + direcao;
   b.className = direcao === "COMPRA" ? "compra" : "venda";
+}
+async function dimensionarPosicao() {
+  const stopVal = parseFloat($("stop").value);
+  if (!stopVal) {
+    avisar("Defina o stop primeiro (digite ou clique em 'Sugerir stop/alvo').", "erro");
+    return;
+  }
+  const b = $("dimensionar");
+  b.disabled = true;
+  try {
+    const d = await api("/api/dimensionar", {
+      simbolo, direcao, risco_pct: $("risco-pct").value,
+      stop: stopVal, alavancagem: $("alavancagem").value,
+    });
+    $("margem").value = d.margem;
+    atualizarFormulario();
+    const msg = `Margem ${fmt(d.margem, 2)} USDT → você arrisca ${fmt(d.risco_usdt, 2)} USDT `
+      + `(${d.risco_pct}% de ${fmt(d.equity, 2)}) se o stop bater.`;
+    avisar(msg + (d.limitada_pelo_saldo ? " ⚠️ limitada pelo saldo disponível." : ""),
+           d.limitada_pelo_saldo ? "aviso" : "ok");
+  } catch (e) { avisar(e.message, "erro"); }
+  b.disabled = false;
 }
 function definirDirecao(d) {
   direcao = d;
@@ -449,7 +481,12 @@ async function abrirPosicao() {
       stop: $("stop").value || null,
       alvo: $("alvo").value || null,
     });
-    avisar(`Aberta: ${p.simbolo} ${p.direcao} ${p.alavancagem}x @ ${fmt(p.entrada)}`);
+    const base = `Aberta: ${p.simbolo} ${p.direcao} ${p.alavancagem}x @ ${fmt(p.entrada)}`;
+    if (p.avisos && p.avisos.length) {
+      avisar("⚠️ " + base + " — " + p.avisos.join("  •  "), "aviso");
+    } else {
+      avisar(base);
+    }
     $("stop").value = ""; $("alvo").value = "";
     atualizarConta();
   } catch (e) { avisar(e.message, true); }
@@ -512,6 +549,7 @@ $("botao-venda").onclick = () => definirDirecao("VENDA");
 $("margem").oninput = atualizarFormulario;
 $("alavancagem").oninput = atualizarFormulario;
 $("abrir-botao").onclick = abrirPosicao;
+$("dimensionar").onclick = dimensionarPosicao;
 $("sugerir").onclick = sugerirNiveis;
 $("analisar").onclick = analisar;
 $("varrer").onclick = varrer;

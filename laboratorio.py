@@ -1,13 +1,17 @@
-"""Laboratório de estratégias: testa todas as combinações e mede a assertividade real.
+"""Laboratório de estratégias: mede a assertividade real, sem se enganar.
 
-Para cada combinação de ESTRATÉGIA x SAÍDA (stop/alvo) x LIMIAR, roda o backtest
-em todos os ativos informados e mede a taxa de acerto separando:
+Três camadas de validação, da mais simples à mais rigorosa:
 
-  TREINO (primeiros 70% dos dados)  — onde é fácil "acertar" por ajuste excessivo
-  TESTE  (últimos 30%, fora da amostra) — o número que realmente importa
+1. TREINO x TESTE (70/30): mede o acerto no terço final que a otimização não viu.
+2. INTERVALO DE CONFIANÇA: um acerto alto com poucas operações pode ser sorte.
+   Só aprova se o limite INFERIOR do acerto (95% de confiança, Wilson) ainda
+   superar o ponto de empate da relação risco/retorno.
+3. WALK-FORWARD: simula o uso honesto — em cada janela, escolhe a melhor config
+   usando SÓ o passado e mede o resultado na janela seguinte. É o teste mais
+   próximo da realidade (padrão de quants para evitar overfitting).
 
-Uma configuração só é aprovada se, NO PERÍODO DE TESTE, atingir a meta de taxa de
-acerto E tiver fator de lucro > 1 (acertar muito perdendo dinheiro não serve).
+O backtest já inclui taxa + slippage + funding, então os números aqui são
+conservadores de propósito (backtests "limpos" enganam a favor).
 
 Uso:
   python laboratorio.py BTCUSDT ETHUSDT SOLUSDT
@@ -15,6 +19,7 @@ Uso:
 """
 
 import argparse
+import math
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -37,19 +42,73 @@ SAIDAS = [
 LIMIARES = [70, 85]
 PROPORCAO_TREINO = 0.7
 MINIMO_TRADES_TESTE = 8
+MINIMO_TRADES_IS = 20   # mínimo no "passado" para uma config ser elegível no walk-forward
 
 
-def metricas(operacoes):
-    """Taxa de acerto e fator de lucro de uma lista de operações fechadas."""
-    fechadas = [op for op in operacoes if op.resultado != "ABERTA"]
+def metricas(trades):
+    """(nº, taxa de acerto %, fator de lucro) de uma lista de operações fechadas.
+
+    Aceita objetos Operacao ou tuplas (data, lucro, resultado)."""
+    def lucro(t): return t.lucro if hasattr(t, "lucro") else t[1]
+    def res(t): return t.resultado if hasattr(t, "resultado") else t[2]
+    fechadas = [t for t in trades if res(t) != "ABERTA"]
     total = len(fechadas)
     if total == 0:
         return 0, 0.0, 0.0
-    vitorias = sum(1 for op in fechadas if op.lucro > 0)
-    ganhos = sum(op.lucro for op in fechadas if op.lucro > 0)
-    perdas = abs(sum(op.lucro for op in fechadas if op.lucro < 0))
+    vitorias = sum(1 for t in fechadas if lucro(t) > 0)
+    ganhos = sum(lucro(t) for t in fechadas if lucro(t) > 0)
+    perdas = abs(sum(lucro(t) for t in fechadas if lucro(t) < 0))
     fator = ganhos / perdas if perdas else float("inf")
     return total, 100 * vitorias / total, fator
+
+
+def wilson_inferior(taxa_pct: float, n: int, z: float = 1.96) -> float:
+    """Limite inferior do intervalo de confiança de 95% para a taxa de acerto (Wilson)."""
+    if n == 0:
+        return 0.0
+    p = taxa_pct / 100
+    centro = p + z * z / (2 * n)
+    margem = z * math.sqrt((p * (1 - p) + z * z / (4 * n)) / n)
+    return 100 * (centro - margem) / (1 + z * z / n)
+
+
+def break_even(stop: float, alvo: float) -> float:
+    """Taxa de acerto mínima para empatar com essa relação risco/retorno (%)."""
+    return 100 * stop / (stop + alvo)
+
+
+def walk_forward(combos: list[dict], n_folds: int, meta: float):
+    """Walk-forward ancorado: em cada janela escolhe a melhor config olhando só o
+    passado e mede na janela seguinte. Devolve os trades OOS agregados e o histórico."""
+    todas_datas = sorted(d for c in combos for (d, _, _) in c["trades"])
+    if len(todas_datas) < 50:
+        return None
+    t0, t1 = todas_datas[0], todas_datas[-1]
+    limites = [t0 + (t1 - t0) * k / (n_folds + 1) for k in range(n_folds + 2)]
+
+    oos_total, historico = [], []
+    for j in range(1, n_folds + 1):
+        ini_oos, fim_oos = limites[j], limites[j + 1]
+        # escolhe a melhor config usando SÓ dados anteriores ao início da janela OOS
+        candidatas = []
+        for c in combos:
+            passado = [t for t in c["trades"] if t[0] < ini_oos]
+            n_is, wr_is, fl_is = metricas(passado)
+            if n_is >= MINIMO_TRADES_IS and fl_is > 1.0:
+                candidatas.append((fl_is, wr_is, c))
+        if not candidatas:
+            continue
+        _, _, escolhida = max(candidatas, key=lambda x: (x[0], x[1]))
+        oos = [t for t in escolhida["trades"] if ini_oos <= t[0] < fim_oos]
+        n_oos, wr_oos, fl_oos = metricas(oos)
+        oos_total += oos
+        historico.append({
+            "janela": j, "ini": ini_oos, "fim": fim_oos,
+            "estrategia": escolhida["estrategia"], "stop": escolhida["stop"],
+            "alvo": escolhida["alvo"], "limiar": escolhida["limiar"],
+            "n_oos": n_oos, "wr_oos": wr_oos, "fl_oos": fl_oos,
+        })
+    return {"oos": oos_total, "historico": historico}
 
 
 def main():
@@ -58,6 +117,7 @@ def main():
     parser.add_argument("--tf", default="4h", choices=list(TIMEFRAME_CONTEXTO))
     parser.add_argument("--candles", type=int, default=3000)
     parser.add_argument("--meta", type=float, default=65.0, help="Taxa de acerto alvo (%%)")
+    parser.add_argument("--folds", type=int, default=4, help="Janelas de walk-forward")
     parser.add_argument("--sem-venda", action="store_true", help="Apenas operações de compra")
     args = parser.parse_args()
 
@@ -77,7 +137,7 @@ def main():
 
     # ----- roda a grade de combinações -----
     print(f"\nTestando {len(ESTRATEGIAS)} estratégias x {len(SAIDAS)} saídas x "
-          f"{len(LIMIARES)} limiares em {len(simbolos)} ativos...")
+          f"{len(LIMIARES)} limiares em {len(simbolos)} ativos (com taxa+slippage+funding)...")
     resultados = []
     for nome_estrategia in ESTRATEGIAS:
         scores_cache = {
@@ -86,7 +146,7 @@ def main():
         }
         for stop, alvo in SAIDAS:
             for limiar in LIMIARES:
-                ops_treino, ops_teste, retornos = [], [], []
+                ops_treino, ops_teste, todos, retornos = [], [], [], []
                 for simbolo, (df, df_maior, corte) in mercado.items():
                     res = backtest.executar(
                         df, df_maior, simbolo=simbolo, timeframe=args.tf,
@@ -96,68 +156,97 @@ def main():
                     )
                     ops_treino += [op for op in res.operacoes if op.entrada_data < corte]
                     ops_teste += [op for op in res.operacoes if op.entrada_data >= corte]
+                    todos += [(op.entrada_data, op.lucro, op.resultado) for op in res.operacoes]
                     retornos.append(res.retorno_total)
                 n_treino, wr_treino, _ = metricas(ops_treino)
                 n_teste, wr_teste, fl_teste = metricas(ops_teste)
+                ci = wilson_inferior(wr_teste, n_teste)
+                be = break_even(stop, alvo)
                 resultados.append({
                     "estrategia": nome_estrategia, "stop": stop, "alvo": alvo,
                     "limiar": limiar, "n_treino": n_treino, "n_teste": n_teste,
                     "wr_treino": wr_treino, "wr_teste": wr_teste, "fl_teste": fl_teste,
-                    "retorno_medio": sum(retornos) / len(retornos),
-                    "aprovada": wr_teste >= args.meta and fl_teste > 1.0
-                                and n_teste >= MINIMO_TRADES_TESTE,
+                    "ci": ci, "break_even": be, "retorno_medio": sum(retornos) / len(retornos),
+                    "trades": todos,
+                    # aprovada = bate a meta, dá lucro E é estatisticamente confiável
+                    # (o pior caso do acerto, com 95% de confiança, ainda empata ou ganha)
+                    "aprovada": (wr_teste >= args.meta and fl_teste > 1.0
+                                 and n_teste >= MINIMO_TRADES_TESTE and ci >= be),
                 })
 
     confiaveis = [r for r in resultados if r["n_teste"] >= MINIMO_TRADES_TESTE]
     descartadas = len(resultados) - len(confiaveis)
     confiaveis.sort(key=lambda r: (r["aprovada"], r["wr_teste"]), reverse=True)
 
-    # ----- relatório -----
-    L = 98
+    # ----- relatório: tabela 70/30 com intervalo de confiança -----
+    L = 104
     print()
     print("=" * L)
     print(f"  RESULTADO DO LABORATÓRIO  |  {', '.join(simbolos)}  |  {args.tf}")
-    print(f"  Meta: acerto >= {args.meta:.0f}% no TESTE (30% finais, fora da amostra) "
-          f"com fator de lucro > 1")
+    print(f"  Aprova se: acerto >= {args.meta:.0f}% no teste, fator de lucro > 1 E o pior caso")
+    print(f"  do acerto (IC 95%) ainda superar o ponto de empate da relação risco/retorno.")
     print("=" * L)
-    cab = (f"  {'ESTRATÉGIA':<14}{'STOP':>6}{'ALVO':>6}{'RR':>6}{'LIMIAR':>8}"
-           f"{'TRADES':>8}{'AC.TREINO':>11}{'AC.TESTE':>10}{'FL TESTE':>10}{'RET.MÉD':>9}  META")
+    cab = (f"  {'ESTRATÉGIA':<13}{'STOP':>5}{'ALVO':>5}{'RR':>6}{'LIM':>5}"
+           f"{'N':>6}{'AC.TREINO':>10}{'AC.TESTE':>10}{'IC95↓':>8}{'EMPATE':>8}{'FL':>7}  OK")
     print(cab)
     print("-" * L)
-    for r in confiaveis:
+    for r in confiaveis[:30]:
         rr = r["alvo"] / r["stop"]
         fl = "inf" if r["fl_teste"] == float("inf") else f"{r['fl_teste']:.2f}"
         marca = "  <<<" if r["aprovada"] else ""
-        print(f"  {r['estrategia']:<14}{r['stop']:>6.1f}{r['alvo']:>6.1f}{rr:>6.2f}"
-              f"{r['limiar']:>8}{r['n_treino'] + r['n_teste']:>8}"
-              f"{r['wr_treino']:>10.1f}%{r['wr_teste']:>9.1f}%{fl:>10}"
-              f"{r['retorno_medio']:>8.1f}%{marca}")
+        print(f"  {r['estrategia']:<13}{r['stop']:>5.1f}{r['alvo']:>5.1f}{rr:>6.2f}"
+              f"{r['limiar']:>5}{r['n_treino'] + r['n_teste']:>6}"
+              f"{r['wr_treino']:>9.1f}%{r['wr_teste']:>9.1f}%{r['ci']:>7.1f}%"
+              f"{r['break_even']:>7.1f}%{fl:>7}{marca}")
     print("-" * L)
     if descartadas:
         print(f"  ({descartadas} combinações ocultadas por terem menos de "
-              f"{MINIMO_TRADES_TESTE} operações no período de teste)")
+              f"{MINIMO_TRADES_TESTE} operações no teste)")
 
     aprovadas = [r for r in confiaveis if r["aprovada"]]
     if aprovadas:
         melhor = aprovadas[0]
-        print(f"\n  {len(aprovadas)} configuração(ões) bateram a meta FORA da amostra.")
-        print("  A melhor delas pode ser usada assim:")
+        print(f"\n  {len(aprovadas)} config(s) passaram nos 3 filtros (meta + lucro + confiança).")
+        print("  A melhor:")
         print(f"    python analisar.py PAR --tf {args.tf} --estrategia {melhor['estrategia']}"
               f" --stop {melhor['stop']} --alvo {melhor['alvo']} --limiar {melhor['limiar']}")
-        print(f"    python analisar.py PAR --tf {args.tf} --backtest --estrategia "
-              f"{melhor['estrategia']} --stop {melhor['stop']} --alvo {melhor['alvo']}"
-              f" --limiar {melhor['limiar']}")
     else:
-        print(f"\n  Nenhuma configuração sustentou acerto >= {args.meta:.0f}% com lucro fora da amostra.")
-        print("  Isso é um resultado honesto, não um defeito: evita operar uma ilusão.")
-        print("  Tente outros ativos, outro timeframe (--tf 1d) ou uma meta realista (--meta 55).")
+        print(f"\n  Nenhuma config passou nos 3 filtros (meta {args.meta:.0f}% + lucro + confiança).")
+        print("  Resultado honesto: acerto alto com poucos trades costuma ser sorte, não método.")
 
-    print("\n  Como ler a tabela:")
-    print("  - AC.TREINO alto com AC.TESTE baixo = ajuste excessivo (overfitting). Desconfie.")
-    print("  - RR baixo (alvo curto) aumenta o acerto, mas cada perda custa mais que cada ganho;")
-    print("    por isso o fator de lucro (FL) precisa ficar acima de 1,0.")
-    print("  - Acerto mínimo para empatar: RR 0,5 -> 67% | RR 0,7 -> 60% | RR 1 -> 50% | RR 2 -> 34%")
-    print("    (sem contar taxas; na prática, precisa de um pouco mais).")
+    # ----- walk-forward -----
+    wf = walk_forward(resultados, args.folds, args.meta)
+    print()
+    print("=" * L)
+    print("  WALK-FORWARD (escolhe a melhor config olhando só o passado e mede no futuro)")
+    print("=" * L)
+    if not wf or not wf["historico"]:
+        print("  Dados insuficientes para o walk-forward (poucas operações no histórico).")
+    else:
+        print(f"  {'JANELA':<8}{'PERÍODO OOS':<26}{'CONFIG ESCOLHIDA NO PASSADO':<34}"
+              f"{'N':>5}{'ACERTO':>9}{'FL':>7}")
+        print("-" * L)
+        for h in wf["historico"]:
+            fl = "inf" if h["fl_oos"] == float("inf") else f"{h['fl_oos']:.2f}"
+            cfg = f"{h['estrategia']} {h['stop']:g}/{h['alvo']:g} lim{h['limiar']}"
+            periodo = f"{h['ini']:%d/%m/%y}-{h['fim']:%d/%m/%y}"
+            print(f"  #{h['janela']:<7}{periodo:<26}{cfg:<34}"
+                  f"{h['n_oos']:>5}{h['wr_oos']:>8.1f}%{fl:>7}")
+        print("-" * L)
+        n_wf, wr_wf, fl_wf = metricas(wf["oos"])
+        ci_wf = wilson_inferior(wr_wf, n_wf)
+        fl_txt = "inf" if fl_wf == float("inf") else f"{fl_wf:.2f}"
+        print(f"  AGREGADO fora da amostra: {n_wf} operações | acerto {wr_wf:.1f}% "
+              f"(IC95↓ {ci_wf:.1f}%) | fator de lucro {fl_txt}")
+        veredito = ("APROVADO" if wr_wf >= args.meta and fl_wf > 1.0 and n_wf >= MINIMO_TRADES_TESTE
+                    else "REPROVADO")
+        print(f"  Veredito walk-forward: {veredito} "
+              f"(é o número mais próximo do que você viveria operando de verdade)")
+
+    print("\n  Como ler:")
+    print("  - IC95↓ = pior caso do acerto com 95% de confiança. Se < EMPATE, pode ser só sorte.")
+    print("  - Walk-forward é o teste mais duro: se reprova aqui, desconfie do resto.")
+    print("  - Empate por RR: 0,5->67% | 0,7->60% | 1->50% | 2->34% (já com custos, exija folga).")
 
 
 if __name__ == "__main__":

@@ -219,6 +219,14 @@ class Manipulador(BaseHTTPRequestHandler):
                 self._responder(posicao)
             elif url.path == "/api/fechar":
                 self._responder(carteira.fechar(corpo["id"]))
+            elif url.path == "/api/dimensionar":
+                self._responder(carteira.dimensionar(
+                    simbolo=corpo["simbolo"],
+                    direcao=corpo["direcao"],
+                    risco_pct=float(corpo["risco_pct"]),
+                    stop=float(corpo["stop"]),
+                    alavancagem=int(corpo.get("alavancagem", 1)),
+                ))
             elif url.path == "/api/reset":
                 carteira.resetar()
                 self._responder({"ok": True})

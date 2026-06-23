@@ -89,12 +89,22 @@ def executar(
     capital_inicial: float = 1000.0,
     risco_por_operacao: float = 0.01,
     taxa: float = 0.001,
+    slippage: float = 0.0005,
+    funding_8h: float = 0.0001,
     atr_stop: float = 1.5,
     atr_alvo: float = 3.0,
     permitir_venda: bool = True,
 ) -> ResultadoBacktest:
+    # slippage: escorregamento de preço em ordens a mercado (entrada e stop) — sempre
+    #   contra você, como na vida real. Alvo é ordem limitada, sem slippage.
+    # funding_8h: custo de funding de perpétuos a cada 8h (perpétuos cobram funding sobre
+    #   o nocional; modelado como custo constante para não superestimar o retorno).
     if scores is None:
         scores = calcular_scores(df, df_maior, estrategia)
+
+    # nº de períodos de 8h em cada candle, para cobrar funding proporcional ao tempo
+    _horas_candle = {"15m": 0.25, "1h": 1, "4h": 4, "1d": 24, "1w": 168}.get(timeframe, 4)
+    funding_por_candle = funding_8h * _horas_candle / 8
 
     capital = capital_inicial
     resultado = ResultadoBacktest(
@@ -107,6 +117,7 @@ def executar(
     )
     posicao: Operacao | None = None
     quantidade = 0.0
+    candles_aberta = 0  # quantos candles a posição atual está aberta (para o funding)
 
     abertura = df["abertura"].to_numpy()
     maxima = df["maxima"].to_numpy()
@@ -135,13 +146,21 @@ def executar(
                 bateu_stop = maxima[i] >= posicao.stop
                 bateu_alvo = minima[i] <= posicao.alvo
 
+            candles_aberta += 1
             if bateu_stop or bateu_alvo:
-                preco_saida = posicao.stop if bateu_stop else posicao.alvo
+                # stop = ordem a mercado (sofre slippage contra você);
+                # alvo = ordem limitada (preenche no preço, sem slippage)
+                if bateu_stop:
+                    preco_saida = (posicao.stop * (1 - slippage) if posicao.direcao == "COMPRA"
+                                   else posicao.stop * (1 + slippage))
+                else:
+                    preco_saida = posicao.alvo
                 if posicao.direcao == "COMPRA":
                     bruto = quantidade * (preco_saida - posicao.entrada)
                 else:
                     bruto = quantidade * (posicao.entrada - preco_saida)
-                custos = taxa * quantidade * (posicao.entrada + preco_saida)
+                funding = quantidade * posicao.entrada * funding_por_candle * candles_aberta
+                custos = taxa * quantidade * (posicao.entrada + preco_saida) + funding
                 posicao.lucro = bruto - custos
                 posicao.saida = preco_saida
                 posicao.saida_data = datas[i]
@@ -149,6 +168,7 @@ def executar(
                 capital += posicao.lucro
                 resultado.operacoes.append(posicao)
                 posicao = None
+                candles_aberta = 0
             resultado.curva_capital.append(capital)
             continue
 
@@ -163,10 +183,12 @@ def executar(
             continue
 
         direcao = "COMPRA" if score_compra[i - 1] >= score_venda[i - 1] else "VENDA"
-        entrada = abertura[i]
+        preco_ref = abertura[i]
         atr_sinal = atr_arr[i - 1]
-        if atr_sinal <= 0 or entrada <= 0:
+        if atr_sinal <= 0 or preco_ref <= 0:
             continue
+        # entrada a mercado: paga slippage (compra um pouco acima / vende um pouco abaixo)
+        entrada = preco_ref * (1 + slippage) if direcao == "COMPRA" else preco_ref * (1 - slippage)
         if direcao == "COMPRA":
             stop = entrada - atr_stop * atr_sinal
             alvo = entrada + atr_alvo * atr_sinal
@@ -177,15 +199,18 @@ def executar(
         risco_unitario = abs(entrada - stop)
         quantidade = (capital * risco_por_operacao) / risco_unitario
         posicao = Operacao(direcao=direcao, entrada_data=datas[i], entrada=entrada, stop=stop, alvo=alvo)
+        candles_aberta = 0
 
-    # posição ainda aberta no fim: fecha pelo último fechamento
+    # posição ainda aberta no fim: fecha a mercado pelo último fechamento (com slippage)
     if posicao is not None:
-        ultimo = float(df["fechamento"].iloc[-1])
+        ref = float(df["fechamento"].iloc[-1])
+        ultimo = ref * (1 - slippage) if posicao.direcao == "COMPRA" else ref * (1 + slippage)
         if posicao.direcao == "COMPRA":
             bruto = quantidade * (ultimo - posicao.entrada)
         else:
             bruto = quantidade * (posicao.entrada - ultimo)
-        posicao.lucro = bruto - taxa * quantidade * (posicao.entrada + ultimo)
+        funding = quantidade * posicao.entrada * funding_por_candle * candles_aberta
+        posicao.lucro = bruto - taxa * quantidade * (posicao.entrada + ultimo) - funding
         posicao.saida = ultimo
         posicao.saida_data = datas[-1]
         posicao.resultado = "ABERTA"

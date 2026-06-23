@@ -66,11 +66,17 @@ python laboratorio.py BTCUSDT ETHUSDT SOLUSDT BNBUSDT XRPUSDT --tf 4h --meta 65
 ```
 
 Testa **todas as combinações** de estratégia x stop/alvo x limiar nos ativos
-informados e mede a taxa de acerto separando treino (primeiros 70% dos dados) e
-**teste (últimos 30%, que a otimização não viu)**. Só aprova configurações que
-batem a meta de acerto no teste E têm fator de lucro acima de 1 — taxa de acerto
-alta que perde dinheiro não serve. Essa validação fora da amostra é o que separa
-uma estratégia real de uma ilusão estatística (overfitting).
+informados, com **três camadas de validação** (cada vez mais rigorosas):
+
+1. **Treino/teste 70/30** — mede o acerto no terço final que a otimização não viu.
+2. **Intervalo de confiança (Wilson 95%)** — só aprova se o *pior caso* do acerto
+   ainda superar o ponto de empate. Mata o "72% com 42 trades" que pode ser sorte.
+3. **Walk-forward** — escolhe a melhor config olhando só o passado e mede na janela
+   seguinte, repetidamente. É o teste mais próximo da realidade e o veredito final.
+
+O backtest inclui **taxa + slippage + funding**, então os números são conservadores
+de propósito (backtests "limpos" enganam a favor). Essa pilha de validação é o que
+separa uma estratégia real de uma ilusão estatística (overfitting).
 
 ### 5. Simulador: treinar com USDT fictício em preços reais (paper trading)
 
@@ -83,9 +89,11 @@ Abre uma interface no navegador (http://127.0.0.1:8765) com:
 - **Gráfico de candles em tempo real** de qualquer par da Binance (15m, 1h, 4h, 1d)
 - **Compra e venda** com USDT fictício (carteira começa com 10.000)
 - **Alavancagem de 1x a 25x** com preço de liquidação calculado e exibido no gráfico
-- **Stop loss e alvo** opcionais — o botão "Sugerir" preenche com a configuração
-  aprovada no laboratório (stop 2×ATR, alvo 1×ATR)
-- **Score das 4 estratégias** direto na tela, com os critérios atendidos
+- **Gestão de risco embutida (guardrails):** stop obrigatório em posições alavancadas;
+  botão "Calcular margem pelo risco" que dimensiona a posição para arriscar só 1–2%
+  do capital; avisos de alavancagem alta (10x+) e de exposição correlacionada
+- **Stop loss e alvo** — o botão "Sugerir" preenche com stop 2×ATR e alvo 1×ATR
+- **Score das 7 estratégias** direto na tela, com os critérios atendidos
 - **Botão "Varrer top 25"**: analisa as 25 maiores criptos em paralelo (~5 s) com a
   estratégia selecionada e ranqueia os melhores gráficos — clicar num resultado abre
   o gráfico do par com a direção e a análise já carregadas
@@ -116,14 +124,19 @@ São quatro, todas combinando indicadores e price action por pontuação (0 a 10
 | `fibonacci` | Pullback na zona de ouro (50–61,8%) a favor da tendência | Retração de Fibonacci do último swing, estrutura, candle |
 | `tendencia_ema` | Pullback na EMA10 com volume contraído (estratégia "10 EMA") | EMA10 vs EMA50, pullback, volume fraco na correção, candle |
 
-> **O que o laboratório revelou (jun/2026, top 5 por volume):** no 4h, a estratégia
-> `divergencia` foi a melhor de todas — **72,7% de acerto fora da amostra com fator de
-> lucro até 2,37** (stop 1,5×ATR, alvo 1,5×ATR, limiar 85), superando a `confluencia`.
-> Já a `fibonacci` e a `tendencia_ema` (a famosa "estratégia 10 EMA" de 857%) **não se
-> sustentaram fora da amostra** (fator de lucro < 1 nos dois timeframes): geram muitos
-> sinais, mas perdem dinheiro. Elas continuam no sistema como insumo para a varredura
-> por consenso e para reteste futuro — mas **não opere isoladamente o que não validar
-> no seu próprio laboratório.** Rode `python laboratorio.py ...` com dados atuais.
+> **O que o laboratório revelou (jun/2026, top 5 por volume, 4h) — versão honesta:**
+> depois de incluir **custos reais (slippage + funding)** e exigir **confiança estatística**
+> (o pior caso do acerto, com 95% de confiança, precisa superar o ponto de empate),
+> quase todas as configs deixaram de passar. A `divergencia`, que parecia campeã
+> (72%), revelou-se **amostra pequena demais** (42 trades → o acerto real pode estar
+> em ~40%) e perde dinheiro com custos. **Só 1 config marginal passou nos 3 filtros**
+> (`confluencia` 1,5/1,0 limiar 70, FL ~1,0). E o **walk-forward REPROVOU** o conjunto:
+> escolhendo a melhor config com base só no passado e medindo no futuro, o agregado
+> deu 58,5% e fator de lucro 0,86 (perde dinheiro). **Tradução honesta: no 4h, com
+> custos reais e sem se enganar, o sistema não tem edge comprovado.** Isso não é defeito
+> — é a ferramenta fazendo o trabalho dela: te mostrar isso AGORA, no simulado, e não
+> com seu dinheiro. Rode `python laboratorio.py ...` em vários timeframes/ativos e só
+> arrisque dinheiro real no que passar no walk-forward.
 
 O price action (`cripto/priceaction.py`) detecta: martelo, estrela cadente,
 engolfo de alta/baixa, estrutura de mercado (topos e fundos ascendentes ou
