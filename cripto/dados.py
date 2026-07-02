@@ -17,6 +17,12 @@ _IGNORAR_PARES = {
 
 _sessao = requests.Session()
 
+_MINUTOS_INTERVALO = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480, "12h": 720,
+    "1d": 1440, "3d": 4320, "1w": 10080,
+}
+
 
 def _get(caminho: str, params: dict | None = None) -> object:
     """Faz uma requisição GET com até 3 tentativas."""
@@ -35,11 +41,16 @@ def _get(caminho: str, params: dict | None = None) -> object:
     raise ConnectionError(f"Falha ao acessar a Binance ({caminho}): {ultimo_erro}")
 
 
-def buscar_candles(simbolo: str, intervalo: str = "4h", limite: int = 500) -> pd.DataFrame:
+def buscar_candles(simbolo: str, intervalo: str = "4h", limite: int = 500,
+                   apenas_fechados: bool = False) -> pd.DataFrame:
     """Baixa candles (OHLCV) de um par. Pagina automaticamente se limite > 1000.
 
     Retorna DataFrame indexado pela data de abertura do candle, com colunas:
     abertura, maxima, minima, fechamento, volume.
+
+    `apenas_fechados=True` descarta o candle em formação: análise e backtest devem
+    olhar apenas candles fechados (o sinal do candle aberto ainda pode mudar —
+    "repaint"). O gráfico ao vivo usa False para mostrar o candle atual.
     """
     todos: list[list] = []
     fim = None
@@ -67,6 +78,13 @@ def buscar_candles(simbolo: str, intervalo: str = "4h", limite: int = 500) -> pd
     df["data"] = pd.to_datetime(df["tempo_abertura"], unit="ms", utc=True)
     df = df.set_index("data")[["abertura", "maxima", "minima", "fechamento", "volume"]].astype(float)
     df = df[~df.index.duplicated(keep="first")].sort_index()
+
+    if apenas_fechados and len(df):
+        minutos = _MINUTOS_INTERVALO.get(intervalo)
+        if minutos:
+            fim_ultimo = df.index[-1] + pd.Timedelta(minutes=minutos)
+            if fim_ultimo > pd.Timestamp.now(tz="UTC"):
+                df = df.iloc[:-1]
     return df
 
 
@@ -83,6 +101,20 @@ def melhores_pares_usdt(quantidade: int = 50) -> list[str]:
     return [t["symbol"] for t in pares[:quantidade]]
 
 
+# Cache curto do preço: várias posições/consultas no mesmo segundo reutilizam a
+# mesma cotação em vez de ir à Binance a cada chamada (o simulador consulta a
+# conta a cada poucos segundos).
+_cache_precos: dict[str, tuple[float, float]] = {}
+_VALIDADE_PRECO = 2.0  # segundos
+
+
 def preco_atual(simbolo: str) -> float:
-    """Último preço negociado do par."""
-    return float(_get("ticker/price", {"symbol": simbolo.upper()})["price"])
+    """Último preço negociado do par (cache de 2 s)."""
+    simbolo = simbolo.upper()
+    agora = time.time()
+    em_cache = _cache_precos.get(simbolo)
+    if em_cache and agora - em_cache[0] < _VALIDADE_PRECO:
+        return em_cache[1]
+    preco = float(_get("ticker/price", {"symbol": simbolo})["price"])
+    _cache_precos[simbolo] = (agora, preco)
+    return preco

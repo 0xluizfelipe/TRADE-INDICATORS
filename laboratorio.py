@@ -153,6 +153,8 @@ def main():
                         choices=["fixo", "breakeven", "trailing", "parcial"],
                         help="Gestão da saída aplicada a toda a grade")
     parser.add_argument("--sem-venda", action="store_true", help="Apenas operações de compra")
+    parser.add_argument("--regime", action="store_true",
+                        help="Só entra A FAVOR do regime (COMPRA em ALTA, VENDA em BAIXA)")
     args = parser.parse_args()
 
     simbolos = [s.upper() for s in args.simbolos]
@@ -163,9 +165,10 @@ def main():
     for simbolo in simbolos:
         print(f"Baixando {args.candles} candles de {simbolo} ({args.tf} + contexto {tf_maior})...")
         df = adicionar_priceaction(adicionar_indicadores(
-            dados.buscar_candles(simbolo, args.tf, args.candles)))
+            dados.buscar_candles(simbolo, args.tf, args.candles, apenas_fechados=True)))
         df_maior = adicionar_indicadores(
-            dados.buscar_candles(simbolo, tf_maior, max(400, args.candles // 4)))
+            dados.buscar_candles(simbolo, tf_maior, max(400, args.candles // 4),
+                                 apenas_fechados=True))
         corte = df.index[int(len(df) * PROPORCAO_TREINO)]
         mercado[simbolo] = (df, df_maior, corte)
 
@@ -187,6 +190,7 @@ def main():
                         scores=scores_cache[simbolo], limiar=limiar,
                         atr_stop=stop, atr_alvo=alvo, gestao=args.gestao,
                         permitir_venda=not args.sem_venda,
+                        filtro_regime=args.regime,
                     )
                     ops_treino += [op for op in res.operacoes if op.entrada_data < corte]
                     ops_teste += [op for op in res.operacoes if op.entrada_data >= corte]
@@ -217,7 +221,8 @@ def main():
     L = 104
     print()
     print("=" * L)
-    print(f"  RESULTADO DO LABORATÓRIO  |  {', '.join(simbolos)}  |  {args.tf}")
+    print(f"  RESULTADO DO LABORATÓRIO  |  {', '.join(simbolos)}  |  {args.tf}"
+          + ("  |  SÓ A FAVOR DO REGIME" if args.regime else ""))
     print(f"  Aprova se: acerto >= {args.meta:.0f}% no teste, fator de lucro > 1 E o pior caso")
     print(f"  do acerto (IC 95%) ainda superar o ponto de empate da relação risco/retorno.")
     print("=" * L)

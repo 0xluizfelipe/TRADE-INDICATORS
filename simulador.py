@@ -40,7 +40,8 @@ def api_klines(params):
     df = dados.buscar_candles(simbolo, tf, limite)
     return [
         {"time": int(indice.value // 10**9), "open": linha["abertura"],
-         "high": linha["maxima"], "low": linha["minima"], "close": linha["fechamento"]}
+         "high": linha["maxima"], "low": linha["minima"], "close": linha["fechamento"],
+         "volume": linha["volume"]}
         for indice, linha in df.iterrows()
     ]
 
@@ -51,10 +52,17 @@ def api_analise(params):
     nome = params.get("estrategia", ["confluencia"])[0]
     if tf not in TIMEFRAME_CONTEXTO:
         raise ValueError(f"Timeframe inválido: {tf}")
-    df = adicionar_priceaction(adicionar_indicadores(dados.buscar_candles(simbolo, tf, 400)))
-    df_maior = adicionar_indicadores(dados.buscar_candles(simbolo, TIMEFRAME_CONTEXTO[tf], 400))
+    # apenas candles FECHADOS: o candle em formação ainda pode mudar de cara
+    # ("repaint") — e o backtest, que valida a estratégia, só olha candle fechado.
+    df = adicionar_priceaction(adicionar_indicadores(
+        dados.buscar_candles(simbolo, tf, 400, apenas_fechados=True)))
+    df_maior = adicionar_indicadores(
+        dados.buscar_candles(simbolo, TIMEFRAME_CONTEXTO[tf], 400, apenas_fechados=True))
     diag = estrategia.avaliar(df, df_maior, nome, atr_stop=2.0, atr_alvo=1.0)
     diag["data_candle"] = str(diag["data_candle"])
+    diag["regime_maior"] = str(df_maior["regime"].iloc[-1])
+    diag["tf"] = tf
+    diag["tf_maior"] = TIMEFRAME_CONTEXTO[tf]
     return diag
 
 
@@ -85,9 +93,10 @@ def api_varredura(params):
 
     def avaliar_par(par):
         try:
-            df = adicionar_priceaction(adicionar_indicadores(dados.buscar_candles(par, tf, 400)))
+            df = adicionar_priceaction(adicionar_indicadores(
+                dados.buscar_candles(par, tf, 400, apenas_fechados=True)))
             df_maior = adicionar_indicadores(
-                dados.buscar_candles(par, TIMEFRAME_CONTEXTO[tf], 400))
+                dados.buscar_candles(par, TIMEFRAME_CONTEXTO[tf], 400, apenas_fechados=True))
             diag = estrategia.avaliar(df, df_maior, nome, atr_stop=2.0, atr_alvo=1.0)
             return {
                 "simbolo": par, "direcao": diag["direcao"], "score": diag["score"],
@@ -130,9 +139,10 @@ def api_varredura_total(params):
 
     def avaliar_par(par):
         try:
-            df = adicionar_priceaction(adicionar_indicadores(dados.buscar_candles(par, tf, 400)))
+            df = adicionar_priceaction(adicionar_indicadores(
+                dados.buscar_candles(par, tf, 400, apenas_fechados=True)))
             df_maior = adicionar_indicadores(
-                dados.buscar_candles(par, TIMEFRAME_CONTEXTO[tf], 400))
+                dados.buscar_candles(par, TIMEFRAME_CONTEXTO[tf], 400, apenas_fechados=True))
             sinais = [estrategia.avaliar(df, df_maior, nome, atr_stop=2.0, atr_alvo=1.0)
                       for nome in nomes]
             for diag, nome in zip(sinais, nomes):
@@ -167,12 +177,14 @@ class Manipulador(BaseHTTPRequestHandler):
     def log_message(self, formato, *args):
         pass  # silencia o log de cada requisição
 
-    def _responder(self, conteudo, tipo="application/json", codigo=200):
+    def _responder(self, conteudo, tipo="application/json", codigo=200, cabecalhos=None):
         corpo = (json.dumps(conteudo, ensure_ascii=False)
                  if tipo == "application/json" else conteudo).encode("utf-8")
         self.send_response(codigo)
         self.send_header("Content-Type", f"{tipo}; charset=utf-8")
         self.send_header("Content-Length", str(len(corpo)))
+        for chave, valor in (cabecalhos or {}).items():
+            self.send_header(chave, valor)
         self.end_headers()
         self.wfile.write(corpo)
 
@@ -185,12 +197,20 @@ class Manipulador(BaseHTTPRequestHandler):
         try:
             if url.path == "/":
                 self._responder(PAGINA.read_text(encoding="utf-8"), tipo="text/html")
+            elif url.path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
             elif url.path == "/api/klines":
                 self._responder(api_klines(params))
             elif url.path == "/api/conta":
                 self._responder(carteira.estado())
             elif url.path == "/api/diario":
                 self._responder(carteira.diario())
+            elif url.path == "/api/equity":
+                self._responder(carteira.curva_patrimonio())
+            elif url.path == "/api/exportar":
+                self._responder(carteira.exportar_csv(), tipo="text/csv", cabecalhos={
+                    "Content-Disposition": 'attachment; filename="historico-trades.csv"'})
             elif url.path == "/api/analise":
                 self._responder(api_analise(params))
             elif url.path == "/api/pares":
@@ -220,10 +240,17 @@ class Manipulador(BaseHTTPRequestHandler):
                     regime=corpo.get("regime"),
                     estrategia=corpo.get("estrategia"),
                     score=int(corpo["score"]) if corpo.get("score") is not None else None,
+                    nota=corpo.get("nota"),
                 )
                 self._responder(posicao)
             elif url.path == "/api/fechar":
                 self._responder(carteira.fechar(corpo["id"]))
+            elif url.path == "/api/editar":
+                self._responder(carteira.editar(
+                    corpo["id"],
+                    stop=float(corpo["stop"]) if corpo.get("stop") else None,
+                    alvo=float(corpo["alvo"]) if corpo.get("alvo") else None,
+                ))
             elif url.path == "/api/dimensionar":
                 self._responder(carteira.dimensionar(
                     simbolo=corpo["simbolo"],
@@ -251,11 +278,12 @@ def main():
     print(f"  Aberto em: {endereco}")
     print("  Para encerrar: Ctrl+C nesta janela")
     print("=" * 56)
-    threading.Timer(1.0, lambda: webbrowser.open(endereco)).start()
+    if "--sem-navegador" not in sys.argv:
+        threading.Timer(1.0, lambda: webbrowser.open(endereco)).start()
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
-        print("\nSimulador encerrado. Sua carteira está salva em carteira.json.")
+        print("\nSimulador encerrado. Sua carteira continua salva.")
 
 
 if __name__ == "__main__":

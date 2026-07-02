@@ -7,7 +7,8 @@ Uso:
 
 Opções:
   --tf 15m|1h|4h|1d     Timeframe operado (padrão: 4h; o contexto usa o timeframe acima)
-  --estrategia NOME     confluencia | tendencia_pa | reversao | rompimento
+  --estrategia NOME     confluencia | tendencia_pa | reversao | rompimento |
+                        divergencia | fibonacci | tendencia_ema
   --candles N           Quantidade de candles no backtest (padrão: 1500)
   --capital VALOR       Capital inicial do backtest (padrão: 1000)
   --risco PCT           Risco por operação em % (padrão: 1)
@@ -15,6 +16,7 @@ Opções:
   --stop N / --alvo N   Stop e alvo em múltiplos de ATR (padrão: 1.5 / 3.0)
   --top N               Quantos pares escanear no --scan (padrão: 50)
   --sem-venda           Backtest apenas com operações de compra (long only)
+  --regime              Só opera A FAVOR do regime (COMPRA em ALTA, VENDA em BAIXA)
 
 Para descobrir qual combinação tem a melhor assertividade histórica:
   python laboratorio.py BTCUSDT ETHUSDT SOLUSDT
@@ -40,9 +42,13 @@ def linha(caractere="-"):
 
 
 def carregar(simbolo: str, tf: str, candles: int = 500):
+    # apenas candles fechados: o candle em formação ainda pode mudar (repaint) e o
+    # backtest — que valida a estratégia — também só enxerga candles fechados.
     tf_maior = TIMEFRAME_CONTEXTO[tf]
-    df = adicionar_priceaction(adicionar_indicadores(dados.buscar_candles(simbolo, tf, candles)))
-    df_maior = adicionar_indicadores(dados.buscar_candles(simbolo, tf_maior, max(400, candles // 4)))
+    df = adicionar_priceaction(adicionar_indicadores(
+        dados.buscar_candles(simbolo, tf, candles, apenas_fechados=True)))
+    df_maior = adicionar_indicadores(
+        dados.buscar_candles(simbolo, tf_maior, max(400, candles // 4), apenas_fechados=True))
     return df, df_maior, tf_maior
 
 
@@ -60,6 +66,7 @@ def comando_analise(args):
     print(f"  RSI(14):          {diag['rsi']:.1f}")
     print(f"  ADX(14):          {diag['adx']:.1f}")
     print(f"  ATR(14):          {diag['atr']:,.6g}")
+    print(f"  Regime:           {diag['regime']}")
     linha()
     print(f"  Score COMPRA: {diag['score_compra']:3d}/100    Score VENDA: {diag['score_venda']:3d}/100")
     print(f"  Direção dominante: {diag['direcao']}  ({diag['forca']})")
@@ -144,11 +151,13 @@ def comando_backtest(args):
         funding_8h=args.funding / 100,
         gestao=args.gestao,
         permitir_venda=not args.sem_venda,
+        filtro_regime=args.regime,
     )
 
     linha("=")
     print(f"  BACKTEST  {simbolo}  |  {args.tf} (contexto {tf_maior})")
-    print(f"  Estratégia: {args.estrategia}  |  Stop {args.stop:g}x ATR  |  Alvo {args.alvo:g}x ATR  |  Saída: {args.gestao}")
+    print(f"  Estratégia: {args.estrategia}  |  Stop {args.stop:g}x ATR  |  Alvo {args.alvo:g}x ATR  |  Saída: {args.gestao}"
+          + ("  |  Filtro de regime: SÓ a favor" if args.regime else ""))
     print(f"  Período: {res.periodo_inicio:%d/%m/%Y} a {res.periodo_fim:%d/%m/%Y}")
     print(f"  Score mínimo: {args.limiar}  |  Risco por operação: {args.risco:.1f}%")
     print(f"  Custos: taxa 0,1% + slippage {args.slippage:g}%/lado + funding {args.funding:g}%/8h")
@@ -209,6 +218,8 @@ def main():
                         help="Gestão da saída: stop fixo, breakeven, trailing ou saída parcial")
     parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--sem-venda", action="store_true")
+    parser.add_argument("--regime", action="store_true",
+                        help="Só entra A FAVOR do regime (COMPRA em ALTA, VENDA em BAIXA)")
     args = parser.parse_args()
 
     try:

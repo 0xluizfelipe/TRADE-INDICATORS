@@ -51,13 +51,20 @@ fator de lucro, retorno, drawdown e comparação com simplesmente comprar e segu
 | Opção | Significado | Padrão |
 |---|---|---|
 | `--tf` | Timeframe operado (15m, 1h, 4h, 1d) | 4h |
-| `--estrategia` | confluencia, tendencia_pa, reversao ou rompimento | confluencia |
+| `--estrategia` | confluencia, tendencia_pa, reversao, rompimento, divergencia, fibonacci ou tendencia_ema | confluencia |
 | `--candles` | Candles no backtest | 1500 |
 | `--capital` | Capital inicial simulado | 1000 |
 | `--risco` | Risco por operação (% do capital) | 1 |
 | `--limiar` | Score mínimo para entrar | 70 |
 | `--stop` / `--alvo` | Stop e alvo em múltiplos de ATR | 1.5 / 3.0 |
 | `--sem-venda` | Só operações de compra (long only) | desligado |
+| `--regime` | Só entra A FAVOR do regime (COMPRA em ALTA, VENDA em BAIXA) | desligado |
+
+O backtest é deliberadamente honesto: entra só na abertura do candle seguinte ao
+sinal, **verifica stop e alvo já no candle de entrada** (com o stop tendo
+prioridade em caso de empate), desconta taxa + slippage + funding e **só analisa
+candles fechados** — o candle em formação ainda pode mudar de cara ("repaint") e
+por isso nunca gera sinal, nem aqui nem na análise ao vivo.
 
 ### 4. Laboratório: descobrir qual estratégia tem a melhor assertividade histórica
 
@@ -80,10 +87,12 @@ separa uma estratégia real de uma ilusão estatística (overfitting).
 
 O laboratório também mostra o **desempenho por regime de mercado** (ALTA/BAIXA/LATERAL)
 — revela quando uma estratégia só funciona em um regime — e aceita `--gestao`
-(fixo/breakeven/trailing/parcial) para comparar tipos de saída. Ex.:
+(fixo/breakeven/trailing/parcial) para comparar tipos de saída e `--regime` para
+testar a grade inteira operando SÓ a favor do regime. Ex.:
 
 ```
 python laboratorio.py BTCUSDT ETHUSDT SOLUSDT --tf 4h --gestao trailing
+python laboratorio.py BTCUSDT ETHUSDT SOLUSDT --tf 4h --regime
 ```
 
 ### 5. Simulador: treinar com USDT fictício em preços reais (paper trading)
@@ -94,37 +103,55 @@ python simulador.py
 
 Abre uma interface no navegador (http://127.0.0.1:8765) com:
 
-- **Gráfico de candles em tempo real** de qualquer par da Binance (15m, 1h, 4h, 1d)
+- **Gráfico de candles em tempo real** de qualquer par da Binance (15m, 1h, 4h, 1d),
+  com **EMA 50, EMA 200, Bandas de Bollinger e volume** ligáveis por um clique e
+  **contagem regressiva** para o fechamento do candle atual
 - **Compra e venda** com USDT fictício (carteira começa com 10.000)
 - **Alavancagem de 1x a 25x** com preço de liquidação calculado e exibido no gráfico
 - **Gestão de risco embutida (guardrails):** stop obrigatório em posições alavancadas;
-  botão "Calcular margem pelo risco" que dimensiona a posição para arriscar só 1–2%
+  botão "Calcular margem" que dimensiona a posição para arriscar só 1–2%
   do capital; avisos de alavancagem alta (10x+), exposição correlacionada e de operar
   **contra o regime** de mercado
-- **Regime de mercado ao vivo** (ALTA / BAIXA / LATERAL) no painel de análise
+- **Painel "Risco da carteira"**: margem em uso, quanto você perde se TODOS os stops
+  baterem (em USDT e % do patrimônio), margem exposta sem stop e balanço
+  compra × venda — o risco agregado também aparece no topo da tela
+- **Gestão ativa da posição**: editar stop/alvo de posições abertas, botão
+  "Stop → entrada" (breakeven em um clique) e **barra de progresso** mostrando onde
+  o preço está entre o stop e o alvo
+- **Curva de patrimônio** (equity curve) do resultado realizado, operação a operação
+- **Diário de trades**: campo "por que este trade?" na abertura — a anotação aparece
+  na posição, no histórico e no CSV exportado (revisar os próprios motivos é o
+  exercício nº 1 de disciplina)
+- **Exportar CSV**: histórico completo com datas, estratégia, score, regime e notas,
+  pronto para planilha
+- **Regime de mercado ao vivo** no painel de análise — do timeframe operado E do
+  timeframe de contexto (ex.: 4h + 1d)
 - **Coach de disciplina:** analisa seu histórico e aponta SEUS padrões de erro —
   operações sem stop, contra a tendência, liquidações e resultado por alavancagem
-- **Stop loss e alvo** — o botão "Sugerir" preenche com stop 2×ATR e alvo 1×ATR
-- **Score das 7 estratégias** direto na tela, com os critérios atendidos
-- **Botão "Varrer top 25"**: analisa as 25 maiores criptos em paralelo (~5 s) com a
+- **Stop loss e alvo** — o botão "Sugerir" preenche com stop 2×ATR e alvo 1×ATR a
+  partir do preço ao vivo
+- **Score das 7 estratégias** direto na tela, com os critérios atendidos, sempre no
+  último candle FECHADO (sem repaint — o mesmo dado que o backtest enxerga)
+- **Botão "🔍 Top 25"**: analisa as 25 maiores criptos em paralelo (~5 s) com a
   estratégia selecionada e ranqueia os melhores gráficos — clicar num resultado abre
   o gráfico do par com a direção e a análise já carregadas
-- **Botão "Varrer (todas estratégias)"**: roda as 4 estratégias em cada um dos 25 pares
-  e ordena por CONSENSO — quantas estratégias apontam a mesma direção. 3/4 ou 4/4
-  concordando (badge dourado) é o sinal mais confiável, pois é confluência entre
+- **Botão "🎯 Consenso"**: roda as 7 estratégias em cada um dos 25 pares
+  e ordena por CONSENSO — quantas estratégias apontam a mesma direção. Consenso alto
+  (badge dourado) é o sinal mais confiável, pois é confluência entre
   métodos independentes, não um pico isolado de uma estratégia só
 - Execução automática de stop/alvo/liquidação, **inclusive retroativa**: se você
   fechar o simulador, ao reabrir ele verifica os candles do período e executa as
   saídas no preço certo (pior caso primeiro, como no backtest)
 - Taxa de 0,05% por lado (taker de futuros) e histórico com taxa de acerto
 
-A carteira fica salva em `carteira.json`. O botão "Reiniciar carteira" zera tudo.
+A carteira fica salva fora da pasta do projeto (em `%LOCALAPPDATA%\analista-cripto\`,
+protegida da sincronização do OneDrive). O botão "Reiniciar" zera tudo.
 Use o simulador por algumas semanas antes de pensar em dinheiro real: ele valida
 não só a estratégia, mas a SUA disciplina em segui-la.
 
 ## As estratégias
 
-São quatro, todas combinando indicadores e price action por pontuação (0 a 100):
+São sete, todas combinando indicadores e price action por pontuação (0 a 100):
 
 | Estratégia | Lógica | Principais sinais |
 |---|---|---|
@@ -136,19 +163,21 @@ São quatro, todas combinando indicadores e price action por pontuação (0 a 10
 | `fibonacci` | Pullback na zona de ouro (50–61,8%) a favor da tendência | Retração de Fibonacci do último swing, estrutura, candle |
 | `tendencia_ema` | Pullback na EMA10 com volume contraído (estratégia "10 EMA") | EMA10 vs EMA50, pullback, volume fraco na correção, candle |
 
-> **O que o laboratório revelou (jun/2026, top 5 por volume, 4h) — versão honesta:**
-> depois de incluir **custos reais (slippage + funding)** e exigir **confiança estatística**
-> (o pior caso do acerto, com 95% de confiança, precisa superar o ponto de empate),
-> quase todas as configs deixaram de passar. A `divergencia`, que parecia campeã
-> (72%), revelou-se **amostra pequena demais** (42 trades → o acerto real pode estar
-> em ~40%) e perde dinheiro com custos. **Só 1 config marginal passou nos 3 filtros**
-> (`confluencia` 1,5/1,0 limiar 70, FL ~1,0). E o **walk-forward REPROVOU** o conjunto:
-> escolhendo a melhor config com base só no passado e medindo no futuro, o agregado
-> deu 58,5% e fator de lucro 0,86 (perde dinheiro). **Tradução honesta: no 4h, com
-> custos reais e sem se enganar, o sistema não tem edge comprovado.** Isso não é defeito
-> — é a ferramenta fazendo o trabalho dela: te mostrar isso AGORA, no simulado, e não
-> com seu dinheiro. Rode `python laboratorio.py ...` em vários timeframes/ativos e só
-> arrisque dinheiro real no que passar no walk-forward.
+> **O que o laboratório revelou (jul/2026, BTC/ETH/SOL, 4h, motor corrigido) — versão honesta:**
+> o backtest ficou ainda mais rigoroso (agora verifica stop/alvo **já no candle de
+> entrada**, o que backtests ingênuos ignoram) e os números caíram — sinal de que os
+> antigos estavam otimistas. Sem filtro de regime, **nenhuma config passou nos 3
+> filtros** e o walk-forward reprovou (acerto 40%, FL 0,73). Com o novo **filtro de
+> regime** (`--regime`, só opera a favor da tendência), **1 config passou nos 3
+> filtros**: `reversao` stop 1,5 / alvo 1,0 / limiar 70 — 88% de acerto no teste,
+> FL 3,88, e o pior caso estatístico (IC95 65,7%) acima do ponto de empate (60%).
+> MAS a amostra é pequena (55 trades) e o **walk-forward agregado continua
+> REPROVADO** (38%, FL 0,78). **Tradução honesta: ainda não há edge comprovado para
+> operar no automático; a `reversao` com filtro de regime é uma candidata a
+> acompanhar no simulador, não uma promessa.** Isso não é defeito — é a ferramenta
+> fazendo o trabalho dela: te mostrar isso AGORA, no simulado, e não com seu
+> dinheiro. Rode `python laboratorio.py ...` em vários timeframes/ativos (com e sem
+> `--regime`) e só arrisque dinheiro real no que passar no walk-forward.
 
 O price action (`cripto/priceaction.py`) detecta: martelo, estrela cadente,
 engolfo de alta/baixa, estrutura de mercado (topos e fundos ascendentes ou
@@ -208,9 +237,9 @@ simulador.py           Paper trading no navegador com gráficos em tempo real
 duracao.py             Mede acerto histórico e duração típica de uma configuração
 web/simulador.html     Interface visual do simulador
 cripto/dados.py        Coleta de dados (API pública da Binance)
-cripto/indicadores.py  EMA, RSI, MACD, Bollinger, ATR, ADX, volume
-cripto/priceaction.py  Padrões de candle, estrutura, suporte/resistência, rompimentos
-cripto/estrategia.py   As 4 estratégias e o sistema de pontuação
+cripto/indicadores.py  EMA, RSI, MACD, Bollinger, ATR, ADX, volume, regime
+cripto/priceaction.py  Padrões de candle, estrutura, S/R, divergências, Fibonacci
+cripto/estrategia.py   As 7 estratégias e o sistema de pontuação
 cripto/backtest.py     Simulador de operações em dados históricos
-cripto/carteira.py     Carteira fictícia do paper trading (salva em carteira.json)
+cripto/carteira.py     Carteira fictícia (salva em %LOCALAPPDATA%\analista-cripto\)
 ```

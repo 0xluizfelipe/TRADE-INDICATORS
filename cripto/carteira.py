@@ -90,7 +90,7 @@ class Carteira:
     def abrir(self, simbolo: str, direcao: str, margem: float, alavancagem: int,
               stop: float | None = None, alvo: float | None = None,
               regime: str | None = None, estrategia: str | None = None,
-              score: int | None = None) -> dict:
+              score: int | None = None, nota: str | None = None) -> dict:
         simbolo = simbolo.upper()
         direcao = direcao.upper()
         if direcao not in ("COMPRA", "VENDA"):
@@ -182,6 +182,7 @@ class Carteira:
                 "contra_regime": contra_regime,
                 "estrategia": estrategia or "manual",
                 "score": score,
+                "nota": (nota or "").strip()[:200] or None,
                 "abertura_ms": _agora_ms(),
                 "ultimo_check_ms": _agora_ms(),
             }
@@ -254,6 +255,7 @@ class Carteira:
             "contra_regime": posicao.get("contra_regime"),
             "estrategia": posicao.get("estrategia", "manual"),
             "score": posicao.get("score"),
+            "nota": posicao.get("nota"),
             "abertura_ms": posicao["abertura_ms"],
             "fechamento_ms": quando_ms,
         }
@@ -269,6 +271,45 @@ class Carteira:
             registro = self._encerrar(posicao, preco, "MANUAL", _agora_ms())
             self.salvar()
             return registro
+
+    def editar(self, id_posicao: str, stop: float | None, alvo: float | None) -> dict:
+        """Altera o stop e/ou o alvo de uma posição aberta (gestão ativa do trade).
+
+        Permite mover o stop para o preço de entrada (breakeven) ou persegui-lo a
+        favor do lucro (trailing manual). Validação contra o preço ATUAL: o nível
+        precisa fazer sentido agora, não no momento da abertura.
+        """
+        with _trava:
+            posicao = next((p for p in self.posicoes if p["id"] == id_posicao), None)
+            if posicao is None:
+                raise ValueError(f"Posição {id_posicao} não encontrada.")
+            preco = dados.preco_atual(posicao["simbolo"])
+            compra = posicao["direcao"] == "COMPRA"
+
+            if posicao["alavancagem"] > 1 and stop is None:
+                raise ValueError("Posição alavancada não pode ficar sem stop loss.")
+            if stop is not None:
+                if compra and not 0 < stop < preco:
+                    raise ValueError("Para COMPRA o stop deve ficar abaixo do preço atual.")
+                if not compra and stop <= preco:
+                    raise ValueError("Para VENDA o stop deve ficar acima do preço atual.")
+                if posicao["alavancagem"] > 1:
+                    liq = posicao["liquidacao"]
+                    alem_da_liq = (compra and stop <= liq) or (not compra and stop >= liq)
+                    if alem_da_liq:
+                        raise ValueError(
+                            f"Stop além do preço de liquidação ({liq:,.6g}) nunca executa — "
+                            "a posição seria liquidada antes.")
+            if alvo is not None:
+                if compra and alvo <= preco:
+                    raise ValueError("Para COMPRA o alvo deve ficar acima do preço atual.")
+                if not compra and not 0 < alvo < preco:
+                    raise ValueError("Para VENDA o alvo deve ficar abaixo do preço atual.")
+
+            posicao["stop"] = stop
+            posicao["alvo"] = alvo
+            self.salvar()
+            return {**posicao, "preco_atual": preco}
 
     # ------------------------- saídas automáticas -------------------------
 
@@ -309,7 +350,7 @@ class Carteira:
         except Exception:
             return False  # sem rede; o preço ao vivo (ou a próxima consulta) tenta de novo
         inicio = posicao["ultimo_check_ms"]
-        recentes = candles[candles.index.view("int64") // 10**6 >= inicio - 60_000]
+        recentes = candles[candles.index.asi8 // 10**6 >= inicio - 60_000]
         for data, candle in recentes.iterrows():
             atingido = self._nivel_atingido(posicao, candle["minima"], candle["maxima"])
             if atingido:
@@ -365,12 +406,27 @@ class Carteira:
 
             posicoes_abertas = []
             patrimonio = self.saldo
+            margem_usada = margem_compra = margem_venda = 0.0
+            risco_stops = risco_sem_stop = 0.0
             for posicao in self.posicoes:
                 preco = precos[posicao["simbolo"]]
                 sinal = 1 if posicao["direcao"] == "COMPRA" else -1
                 pnl = posicao["quantidade"] * (preco - posicao["entrada"]) * sinal
                 pnl = max(pnl, -posicao["margem"])
                 patrimonio += posicao["margem"] + pnl
+
+                margem_usada += posicao["margem"]
+                if posicao["direcao"] == "COMPRA":
+                    margem_compra += posicao["margem"]
+                else:
+                    margem_venda += posicao["margem"]
+                # quanto ainda pode ser perdido DAQUI até o stop (0 se o stop já trava lucro)
+                if posicao["stop"] is not None:
+                    perda_ate_stop = posicao["quantidade"] * (preco - posicao["stop"]) * sinal
+                    risco_stops += max(0.0, min(perda_ate_stop, posicao["margem"] + pnl))
+                else:
+                    risco_sem_stop += posicao["margem"] + min(pnl, 0)
+
                 posicoes_abertas.append({
                     **posicao,
                     "preco_atual": preco,
@@ -378,6 +434,7 @@ class Carteira:
                     "pnl_pct": 100 * pnl / posicao["margem"],
                 })
 
+            risco_total = risco_stops + risco_sem_stop
             fechadas = sorted(self.historico, key=lambda r: r["fechamento_ms"], reverse=True)
             vitorias = sum(1 for r in self.historico if r["resultado"] > 0)
             return {
@@ -389,7 +446,64 @@ class Carteira:
                 "historico": fechadas[:30],
                 "total_fechadas": len(self.historico),
                 "taxa_acerto": 100 * vitorias / len(self.historico) if self.historico else 0,
+                "risco": {
+                    "margem_usada": round(margem_usada, 2),
+                    "margem_compra": round(margem_compra, 2),
+                    "margem_venda": round(margem_venda, 2),
+                    "risco_stops": round(risco_stops, 2),
+                    "risco_sem_stop": round(risco_sem_stop, 2),
+                    "risco_total": round(risco_total, 2),
+                    "risco_pct": round(100 * risco_total / patrimonio, 2) if patrimonio > 0 else 0,
+                },
             }
+
+    def curva_patrimonio(self) -> list[dict]:
+        """Curva do capital REALIZADO: saldo inicial + resultado acumulado das
+        operações fechadas, ponto a ponto. (PnL de posições abertas não entra —
+        a curva mostra o que já foi consolidado.)"""
+        with _trava:
+            fechadas = sorted(self.historico, key=lambda r: r["fechamento_ms"])
+        if not fechadas:
+            return []
+        pontos = [{"t": fechadas[0]["abertura_ms"], "v": SALDO_INICIAL}]
+        acumulado = SALDO_INICIAL
+        for r in fechadas:
+            acumulado += r["resultado"]
+            # garante tempo estritamente crescente (fechamentos no mesmo ms)
+            t = max(r["fechamento_ms"], pontos[-1]["t"] + 1)
+            pontos.append({"t": t, "v": round(acumulado, 2)})
+        return pontos
+
+    def exportar_csv(self) -> str:
+        """Histórico completo em CSV (para planilha ou análise externa)."""
+        import csv
+        import io
+        from datetime import datetime, timezone
+
+        def data_iso(ms):
+            if not ms:
+                return ""
+            return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        with _trava:
+            fechadas = sorted(self.historico, key=lambda r: r["fechamento_ms"])
+        saida = io.StringIO()
+        escritor = csv.writer(saida, delimiter=";", lineterminator="\n")
+        escritor.writerow([
+            "abertura_utc", "fechamento_utc", "simbolo", "direcao", "alavancagem",
+            "margem_usdt", "entrada", "saida", "motivo", "resultado_usdt",
+            "estrategia", "score", "regime", "contra_regime", "tinha_stop", "nota",
+        ])
+        for r in fechadas:
+            escritor.writerow([
+                data_iso(r.get("abertura_ms")), data_iso(r.get("fechamento_ms")),
+                r.get("simbolo"), r.get("direcao"), r.get("alavancagem"),
+                f"{r.get('margem', 0):.2f}", r.get("entrada"), r.get("saida"),
+                r.get("motivo"), f"{r.get('resultado', 0):.2f}",
+                r.get("estrategia"), r.get("score"), r.get("regime"),
+                r.get("contra_regime"), r.get("tinha_stop"), r.get("nota") or "",
+            ])
+        return saida.getvalue()
 
     def diario(self) -> dict:
         """Coach de disciplina: analisa o histórico e aponta os SEUS padrões de erro."""

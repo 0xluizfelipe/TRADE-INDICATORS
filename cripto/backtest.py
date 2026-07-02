@@ -4,8 +4,12 @@ Regras da simulação (conservadoras, para não inflar o resultado):
 - Entrada na ABERTURA do candle seguinte ao sinal (nada de olhar o futuro).
 - Stop a 1,5x ATR e alvo a 3,0x ATR (risco/retorno 2:1).
 - Se stop e alvo são atingidos no mesmo candle, assume-se o STOP (pior caso).
+- O PRÓPRIO candle de entrada também pode acionar stop/alvo (com o stop tendo
+  prioridade) — ignorar isso, como muitos backtests fazem, infla o resultado.
 - Taxa de 0,1% por lado (padrão Binance spot) descontada em cada operação.
 - Risco fixo por operação (% do capital), como manda a gestão de risco.
+- `filtro_regime=True` só permite COMPRA em regime de ALTA e VENDA em regime de
+  BAIXA (recomendado para estratégias de tendência; sufoca as de reversão).
 """
 
 from dataclasses import dataclass, field
@@ -97,6 +101,7 @@ def executar(
     atr_alvo: float = 3.0,
     gestao: str = "fixo",
     permitir_venda: bool = True,
+    filtro_regime: bool = False,
 ) -> ResultadoBacktest:
     # gestao da saída:
     #   "fixo"      stop e alvo fixos (comportamento original)
@@ -216,10 +221,19 @@ def executar(
             continue
         sinal_compra = score_compra[i - 1] >= limiar
         sinal_venda = permitir_venda and score_venda[i - 1] >= limiar
+        if filtro_regime:
+            regime_sinal = str(regime_arr[i - 1])
+            sinal_compra = sinal_compra and regime_sinal == "ALTA"
+            sinal_venda = sinal_venda and regime_sinal == "BAIXA"
         if not (sinal_compra or sinal_venda):
             continue
 
-        direcao = "COMPRA" if score_compra[i - 1] >= score_venda[i - 1] else "VENDA"
+        # a direção só pode ser uma que tenha sinal VÁLIDO (com --sem-venda, um
+        # score de venda maior não pode transformar a operação em VENDA)
+        if sinal_compra and sinal_venda:
+            direcao = "COMPRA" if score_compra[i - 1] >= score_venda[i - 1] else "VENDA"
+        else:
+            direcao = "COMPRA" if sinal_compra else "VENDA"
         preco_ref = abertura[i]
         atr_sinal = atr_arr[i - 1]
         if atr_sinal <= 0 or preco_ref <= 0:
@@ -245,6 +259,30 @@ def executar(
         be_ativo = parcial_feita = False
         alvo_parcial = entrada + risco0 if direcao == "COMPRA" else entrada - risco0
         candles_aberta = 0
+
+        # o candle de ENTRADA também pode atingir stop ou alvo (pior caso: stop tem
+        # prioridade). Pular essa checagem, como muitos backtests fazem, esconde o
+        # risco do primeiro candle e infla o resultado.
+        longa = direcao == "COMPRA"
+        hi, lo = maxima[i], minima[i]
+        saida0 = None
+        if (lo <= stop) if longa else (hi >= stop):
+            preco_saida0 = stop * (1 - slippage) if longa else stop * (1 + slippage)
+            saida0 = (preco_saida0, "STOP")
+        elif (hi >= alvo) if longa else (lo <= alvo):
+            saida0 = (alvo, "ALVO")
+        if saida0 is not None:
+            preco_saida0, tag = saida0
+            gross0 = (qtd_rest * (preco_saida0 - entrada) if longa
+                      else qtd_rest * (entrada - preco_saida0))
+            fees_acum += taxa * qtd_rest * preco_saida0
+            posicao.lucro = gross0 - fees_acum
+            posicao.saida = preco_saida0
+            posicao.saida_data = datas[i]
+            posicao.resultado = tag
+            capital += posicao.lucro
+            resultado.operacoes.append(posicao)
+            posicao = None
 
     # posição ainda aberta no fim: fecha a mercado pelo último fechamento (com slippage)
     if posicao is not None:
