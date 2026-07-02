@@ -80,7 +80,7 @@ def break_even(stop: float, alvo: float) -> float:
 def walk_forward(combos: list[dict], n_folds: int, meta: float):
     """Walk-forward ancorado: em cada janela escolhe a melhor config olhando só o
     passado e mede na janela seguinte. Devolve os trades OOS agregados e o histórico."""
-    todas_datas = sorted(d for c in combos for (d, _, _) in c["trades"])
+    todas_datas = sorted(t[0] for c in combos for t in c["trades"])
     if len(todas_datas) < 50:
         return None
     t0, t1 = todas_datas[0], todas_datas[-1]
@@ -111,6 +111,37 @@ def walk_forward(combos: list[dict], n_folds: int, meta: float):
     return {"oos": oos_total, "historico": historico}
 
 
+def _stats_lucros(lucros: list[float]):
+    """(nº, acerto %, fator de lucro) de uma lista de lucros."""
+    n = len(lucros)
+    if n == 0:
+        return 0, 0.0, 0.0
+    vit = sum(1 for x in lucros if x > 0)
+    ganhos = sum(x for x in lucros if x > 0)
+    perdas = abs(sum(x for x in lucros if x < 0))
+    return n, 100 * vit / n, (ganhos / perdas if perdas else float("inf"))
+
+
+def relatorio_regime(resultados: list[dict]):
+    """Para a melhor config de cada estratégia, separa o desempenho por regime de
+    mercado (ALTA/BAIXA/LATERAL). Revela edge CONDICIONAL que a média esconde."""
+    melhores = {}
+    for r in resultados:
+        if r["n_teste"] < MINIMO_TRADES_TESTE:
+            continue
+        atual = melhores.get(r["estrategia"])
+        if atual is None or r["fl_teste"] > atual["fl_teste"]:
+            melhores[r["estrategia"]] = r
+    linhas = []
+    for estrategia, r in melhores.items():
+        por_regime = {"ALTA": [], "BAIXA": [], "LATERAL": []}
+        for (_, lucro, res, reg) in r["trades"]:
+            if res != "ABERTA" and reg in por_regime:
+                por_regime[reg].append(lucro)
+        linhas.append((estrategia, r, por_regime))
+    return linhas
+
+
 def main():
     parser = argparse.ArgumentParser(description="Laboratório de estratégias")
     parser.add_argument("simbolos", nargs="+", help="Pares, ex: BTCUSDT ETHUSDT SOLUSDT")
@@ -118,6 +149,9 @@ def main():
     parser.add_argument("--candles", type=int, default=3000)
     parser.add_argument("--meta", type=float, default=65.0, help="Taxa de acerto alvo (%%)")
     parser.add_argument("--folds", type=int, default=4, help="Janelas de walk-forward")
+    parser.add_argument("--gestao", default="fixo",
+                        choices=["fixo", "breakeven", "trailing", "parcial"],
+                        help="Gestão da saída aplicada a toda a grade")
     parser.add_argument("--sem-venda", action="store_true", help="Apenas operações de compra")
     args = parser.parse_args()
 
@@ -151,12 +185,13 @@ def main():
                     res = backtest.executar(
                         df, df_maior, simbolo=simbolo, timeframe=args.tf,
                         scores=scores_cache[simbolo], limiar=limiar,
-                        atr_stop=stop, atr_alvo=alvo,
+                        atr_stop=stop, atr_alvo=alvo, gestao=args.gestao,
                         permitir_venda=not args.sem_venda,
                     )
                     ops_treino += [op for op in res.operacoes if op.entrada_data < corte]
                     ops_teste += [op for op in res.operacoes if op.entrada_data >= corte]
-                    todos += [(op.entrada_data, op.lucro, op.resultado) for op in res.operacoes]
+                    todos += [(op.entrada_data, op.lucro, op.resultado, op.regime)
+                              for op in res.operacoes]
                     retornos.append(res.retorno_total)
                 n_treino, wr_treino, _ = metricas(ops_treino)
                 n_teste, wr_teste, fl_teste = metricas(ops_teste)
@@ -243,9 +278,29 @@ def main():
         print(f"  Veredito walk-forward: {veredito} "
               f"(é o número mais próximo do que você viveria operando de verdade)")
 
+    # ----- desempenho por regime de mercado -----
+    print()
+    print("=" * L)
+    print("  DESEMPENHO POR REGIME DE MERCADO (melhor config de cada estratégia)")
+    print("  Revela edge condicional: uma estratégia pode só funcionar em ALTA, ou só em BAIXA.")
+    print("=" * L)
+    print(f"  {'ESTRATÉGIA':<15}{'CONFIG':<16}"
+          f"{'ALTA (n/acerto)':>17}{'BAIXA (n/acerto)':>18}{'LATERAL (n/acerto)':>20}")
+    print("-" * L)
+    for estrategia, r, por_regime in relatorio_regime(resultados):
+        cfg = f"{r['stop']:g}/{r['alvo']:g} lim{r['limiar']}"
+        celulas = []
+        for reg in ("ALTA", "BAIXA", "LATERAL"):
+            n, wr, _ = _stats_lucros(por_regime[reg])
+            celulas.append(f"{n}/{wr:.0f}%" if n else "—")
+        print(f"  {estrategia:<15}{cfg:<16}{celulas[0]:>17}{celulas[1]:>18}{celulas[2]:>20}")
+    print("-" * L)
+    print("  (acerto por regime usa todas as operações da config, não só o teste — mais amostra)")
+
     print("\n  Como ler:")
     print("  - IC95↓ = pior caso do acerto com 95% de confiança. Se < EMPATE, pode ser só sorte.")
     print("  - Walk-forward é o teste mais duro: se reprova aqui, desconfie do resto.")
+    print("  - Regime: se uma estratégia acerta muito mais em um regime, opere SÓ nele.")
     print("  - Empate por RR: 0,5->67% | 0,7->60% | 1->50% | 2->34% (já com custos, exija folga).")
 
 

@@ -398,5 +398,6 @@ def avaliar(df: pd.DataFrame, df_maior: pd.DataFrame, estrategia: str = "conflue
         "atr": atr_valor,
         "rsi": float(candle["rsi"]),
         "adx": float(candle["adx"]),
+        "regime": str(candle["regime"]) if "regime" in df.columns else "?",
         "data_candle": df.index[-1],
     }

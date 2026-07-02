@@ -88,7 +88,9 @@ class Carteira:
         return self.saldo + sum(p["margem"] for p in self.posicoes)
 
     def abrir(self, simbolo: str, direcao: str, margem: float, alavancagem: int,
-              stop: float | None = None, alvo: float | None = None) -> dict:
+              stop: float | None = None, alvo: float | None = None,
+              regime: str | None = None, estrategia: str | None = None,
+              score: int | None = None) -> dict:
         simbolo = simbolo.upper()
         direcao = direcao.upper()
         if direcao not in ("COMPRA", "VENDA"):
@@ -153,6 +155,14 @@ class Carteira:
                     f"de {direcao} — cripto é correlacionada, então elas tendem a ganhar "
                     "ou perder juntas (é quase uma aposta só, maior do que parece).")
 
+            # operar contra o regime (comprar em tendência de baixa, ou vender em alta)
+            contra_regime = ((direcao == "COMPRA" and regime == "BAIXA")
+                             or (direcao == "VENDA" and regime == "ALTA"))
+            if contra_regime:
+                avisos.append(
+                    f"Operação CONTRA o regime ({direcao} com mercado em {regime}) — "
+                    "ir contra a tendência costuma sair caro.")
+
             posicao = {
                 "id": uuid.uuid4().hex[:8],
                 "simbolo": simbolo,
@@ -166,6 +176,12 @@ class Carteira:
                 "liquidacao": liquidacao,
                 "taxa_paga": taxa_abertura,
                 "risco_pct": risco_pct,
+                # campos do diário/coach de disciplina
+                "tinha_stop": stop is not None,
+                "regime": regime or "?",
+                "contra_regime": contra_regime,
+                "estrategia": estrategia or "manual",
+                "score": score,
                 "abertura_ms": _agora_ms(),
                 "ultimo_check_ms": _agora_ms(),
             }
@@ -232,6 +248,12 @@ class Carteira:
             "saida": preco_saida,
             "motivo": motivo,
             "resultado": resultado,
+            # campos do diário/coach (records antigos podem não ter; o diário trata isso)
+            "tinha_stop": posicao.get("tinha_stop"),
+            "regime": posicao.get("regime", "?"),
+            "contra_regime": posicao.get("contra_regime"),
+            "estrategia": posicao.get("estrategia", "manual"),
+            "score": posicao.get("score"),
             "abertura_ms": posicao["abertura_ms"],
             "fechamento_ms": quando_ms,
         }
@@ -368,3 +390,55 @@ class Carteira:
                 "total_fechadas": len(self.historico),
                 "taxa_acerto": 100 * vitorias / len(self.historico) if self.historico else 0,
             }
+
+    def diario(self) -> dict:
+        """Coach de disciplina: analisa o histórico e aponta os SEUS padrões de erro."""
+        with _trava:
+            hist = list(self.historico)
+
+        def resumo(registros):
+            n = len(registros)
+            soma = sum(r["resultado"] for r in registros)
+            vit = sum(1 for r in registros if r["resultado"] > 0)
+            return {"n": n, "total": round(soma, 2),
+                    "acerto": round(100 * vit / n, 1) if n else 0}
+
+        sem_stop = [r for r in hist if r.get("tinha_stop") is False]
+        com_stop = [r for r in hist if r.get("tinha_stop") is True]
+        contra = [r for r in hist if r.get("contra_regime") is True]
+        a_favor = [r for r in hist if r.get("contra_regime") is False]
+        liquidacoes = [r for r in hist if r.get("motivo") == "LIQUIDACAO"]
+        alav_alta = [r for r in hist if r.get("alavancagem", 1) >= ALAVANCAGEM_ALERTA]
+
+        licoes = []
+        if sem_stop:
+            r = resumo(sem_stop)
+            licoes.append(f"Você abriu {r['n']} operação(ões) SEM stop, somando "
+                          f"{r['total']:+.2f} USDT. Stop em toda operação não é opcional.")
+        if liquidacoes:
+            custo = sum(r["resultado"] for r in liquidacoes)
+            licoes.append(f"{len(liquidacoes)} liquidação(ões) custaram {custo:+.2f} USDT — "
+                          "cada uma é uma perda total da margem que um stop teria limitado.")
+        if contra and a_favor:
+            rc, rf = resumo(contra), resumo(a_favor)
+            licoes.append(f"Contra o regime: {rc['acerto']:.0f}% de acerto ({rc['total']:+.2f} USDT). "
+                          f"A favor do regime: {rf['acerto']:.0f}% ({rf['total']:+.2f} USDT). "
+                          "Operar a favor da tendência tende a render mais.")
+        if alav_alta:
+            r = resumo(alav_alta)
+            licoes.append(f"Operações com 10x+ : {r['n']}, resultado {r['total']:+.2f} USDT "
+                          f"({r['acerto']:.0f}% de acerto). Alavancagem amplia o erro, não a habilidade.")
+        if not hist:
+            licoes.append("Sem operações fechadas ainda — o coach aparece conforme você opera.")
+        elif not licoes:
+            licoes.append("Disciplina em dia: stops definidos, sem liquidações, a favor do regime. 👏")
+
+        return {
+            "total": len(hist),
+            "sem_stop": resumo(sem_stop), "com_stop": resumo(com_stop),
+            "contra_regime": resumo(contra), "a_favor_regime": resumo(a_favor),
+            "liquidacoes": {"n": len(liquidacoes),
+                            "custo": round(sum(r["resultado"] for r in liquidacoes), 2)},
+            "alavancagem_alta": resumo(alav_alta),
+            "licoes": licoes,
+        }

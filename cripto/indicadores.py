@@ -79,4 +79,10 @@ def adicionar_indicadores(df: pd.DataFrame) -> pd.DataFrame:
     df["atr"] = atr(df)
     df["adx"] = adx(df)
     df["volume_media"] = df["volume"].rolling(20).mean()
+
+    # Regime de mercado: tendência (preço vs EMA200) filtrada pela força (ADX).
+    # ALTA/BAIXA só quando há tendência com força; senão é LATERAL (mercado de range).
+    forte = df["adx"] > 20
+    acima = fechamento > df["ema200"]
+    df["regime"] = np.where(~forte, "LATERAL", np.where(acima, "ALTA", "BAIXA"))
     return df

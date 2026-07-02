@@ -69,6 +69,11 @@
   .hist-item { display: flex; justify-content: space-between; padding: 6px 0;
                border-bottom: 1px solid var(--borda); font-size: 12.5px; }
   .vazio { color: var(--texto2); font-size: 13px; padding: 8px 0; }
+  .licao { font-size: 12.5px; padding: 6px 8px; margin-bottom: 5px; border-radius: 6px;
+           background: #0d1117; border-left: 3px solid var(--amarelo); }
+  .licao.ok { border-left-color: var(--verde); }
+  .coach-nums { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; font-size: 11.5px; }
+  .coach-nums span { background: #0d1117; border: 1px solid var(--borda); border-radius: 6px; padding: 3px 7px; }
   #aviso { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
            background: var(--painel); border: 1px solid var(--borda); border-radius: 8px;
            padding: 12px 20px; display: none; max-width: 90%; z-index: 10; }
@@ -151,6 +156,11 @@
     <div class="cartao" style="margin-bottom:12px">
       <h2>Posições abertas</h2>
       <div id="posicoes"><div class="vazio">Nenhuma posição aberta.</div></div>
+    </div>
+
+    <div class="cartao" style="margin-bottom:12px">
+      <h2>🧠 Coach de disciplina</h2>
+      <div id="coach"><div class="vazio">Opere para o coach analisar seus padrões.</div></div>
     </div>
 
     <div class="cartao">
@@ -297,6 +307,26 @@ async function atualizarConta() {
     });
 
     desenharLinhas(c.posicoes);
+    atualizarCoach();
+  } catch (e) { /* tenta no próximo ciclo */ }
+}
+
+async function atualizarCoach() {
+  try {
+    const d = await api("/api/diario");
+    const el = $("coach");
+    if (!d.total) {
+      el.innerHTML = '<div class="vazio">Opere para o coach analisar seus padrões.</div>';
+      return;
+    }
+    const nums = [
+      `com stop: ${d.com_stop.n}`, `sem stop: ${d.sem_stop.n}`,
+      `a favor: ${d.a_favor_regime.n}`, `contra: ${d.contra_regime.n}`,
+      `liquidações: ${d.liquidacoes.n}`,
+    ].map(s => `<span>${s}</span>`).join("");
+    const licoes = d.licoes.map(l =>
+      `<div class="licao${l.includes("👏") ? " ok" : ""}">${l}</div>`).join("");
+    el.innerHTML = `<div class="coach-nums">${nums}</div>${licoes}`;
   } catch (e) { /* tenta no próximo ciclo */ }
 }
 
@@ -306,6 +336,7 @@ async function analisar() {
   $("analisar").textContent = "Analisando...";
   try {
     const a = await api(`/api/analise?simbolo=${simbolo}&tf=${tf}&estrategia=${$("estrategia").value}`);
+    a.simbolo_ref = simbolo + tf;
     ultimaAnalise = a;
     $("score-painel").style.display = "block";
     const sc = $("selo-compra"), sv = $("selo-venda");
@@ -313,8 +344,10 @@ async function analisar() {
     sv.textContent = `VENDA ${a.score_venda}/100`;
     sc.style.background = a.score_compra >= 70 ? "var(--verde)" : "#21262d";
     sv.style.background = a.score_venda >= 70 ? "var(--vermelho)" : "#21262d";
-    $("score-info").textContent =
-      `${a.estrategia} · direção dominante: ${a.direcao} (${a.forca}) · RSI ${fmt(a.rsi, 1)} · ADX ${fmt(a.adx, 1)}`;
+    const corReg = { ALTA: "var(--verde)", BAIXA: "var(--vermelho)", LATERAL: "var(--amarelo)" }[a.regime] || "var(--texto2)";
+    $("score-info").innerHTML =
+      `${a.estrategia} · direção dominante: ${a.direcao} (${a.forca}) · RSI ${fmt(a.rsi, 1)} · ADX ${fmt(a.adx, 1)}`
+      + ` · regime: <b style="color:${corReg}">${a.regime}</b>`;
     $("criterios").innerHTML = a.criterios.map(cr =>
       `<div class="criterio ${cr.atendido ? "sim" : ""}">(+${cr.pontos}) ${cr.descricao}</div>`).join("");
   } catch (e) { avisar("Falha na análise: " + e.message, true); }
@@ -474,12 +507,16 @@ async function abrirPosicao() {
   const b = $("abrir-botao");
   b.disabled = true;
   try {
+    const ctx = (ultimaAnalise && ultimaAnalise.simbolo_ref === simbolo + tf) ? ultimaAnalise : null;
     const p = await api("/api/abrir", {
       simbolo, direcao,
       margem: $("margem").value,
       alavancagem: $("alavancagem").value,
       stop: $("stop").value || null,
       alvo: $("alvo").value || null,
+      regime: ctx ? ctx.regime : null,
+      estrategia: ctx ? $("estrategia").value : null,
+      score: ctx ? (direcao === "COMPRA" ? ctx.score_compra : ctx.score_venda) : null,
     });
     const base = `Aberta: ${p.simbolo} ${p.direcao} ${p.alavancagem}x @ ${fmt(p.entrada)}`;
     if (p.avisos && p.avisos.length) {

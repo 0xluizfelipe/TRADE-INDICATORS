@@ -10,6 +10,7 @@ Regras da simulação (conservadoras, para não inflar o resultado):
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from .estrategia import LIMIAR_FORTE, calcular_scores
@@ -26,6 +27,7 @@ class Operacao:
     saida: float | None = None
     resultado: str = ""
     lucro: float = 0.0
+    regime: str = ""  # regime de mercado no momento da entrada (ALTA/BAIXA/LATERAL)
 
 
 @dataclass
@@ -93,8 +95,16 @@ def executar(
     funding_8h: float = 0.0001,
     atr_stop: float = 1.5,
     atr_alvo: float = 3.0,
+    gestao: str = "fixo",
     permitir_venda: bool = True,
 ) -> ResultadoBacktest:
+    # gestao da saída:
+    #   "fixo"      stop e alvo fixos (comportamento original)
+    #   "breakeven" ao atingir +1R a favor, move o stop para o preço de entrada (zero a zero)
+    #   "trailing"  além do breakeven, persegue o stop a atr_stop x ATR do melhor preço
+    #   "parcial"   realiza metade em +1R, move o resto para breakeven e deixa correr até o alvo
+    if gestao not in ("fixo", "breakeven", "trailing", "parcial"):
+        raise ValueError(f"gestão de saída inválida: {gestao}")
     # slippage: escorregamento de preço em ordens a mercado (entrada e stop) — sempre
     #   contra você, como na vida real. Alvo é ordem limitada, sem slippage.
     # funding_8h: custo de funding de perpétuos a cada 8h (perpétuos cobram funding sobre
@@ -118,11 +128,18 @@ def executar(
     posicao: Operacao | None = None
     quantidade = 0.0
     candles_aberta = 0  # quantos candles a posição atual está aberta (para o funding)
+    # estado dinâmico da posição aberta (usado pela gestão de saída)
+    stop_atual = melhor = risco0 = atr0 = alvo_parcial = 0.0
+    qtd_rest = gross_acum = fees_acum = funding_acum = 0.0
+    be_ativo = parcial_feita = False
+    FRAC_PARCIAL = 0.5  # quanto da posição é realizado no primeiro alvo (modo "parcial")
 
     abertura = df["abertura"].to_numpy()
     maxima = df["maxima"].to_numpy()
     minima = df["minima"].to_numpy()
     atr_arr = df["atr"].to_numpy()
+    regime_arr = (df["regime"].to_numpy() if "regime" in df.columns
+                  else np.array(["?"] * len(df)))
     score_compra = scores["score_compra"].to_numpy()
     score_venda = scores["score_venda"].to_numpy()
     datas = df.index
@@ -138,37 +155,57 @@ def executar(
 
     for i in range(inicio, len(df)):
         if posicao is not None:
-            # verifica saída no candle atual (stop tem prioridade — pior caso)
-            if posicao.direcao == "COMPRA":
-                bateu_stop = minima[i] <= posicao.stop
-                bateu_alvo = maxima[i] >= posicao.alvo
-            else:
-                bateu_stop = maxima[i] >= posicao.stop
-                bateu_alvo = minima[i] <= posicao.alvo
-
+            longa = posicao.direcao == "COMPRA"
+            entrada_p = posicao.entrada
             candles_aberta += 1
-            if bateu_stop or bateu_alvo:
-                # stop = ordem a mercado (sofre slippage contra você);
-                # alvo = ordem limitada (preenche no preço, sem slippage)
-                if bateu_stop:
-                    preco_saida = (posicao.stop * (1 - slippage) if posicao.direcao == "COMPRA"
-                                   else posicao.stop * (1 + slippage))
-                else:
-                    preco_saida = posicao.alvo
-                if posicao.direcao == "COMPRA":
-                    bruto = quantidade * (preco_saida - posicao.entrada)
-                else:
-                    bruto = quantidade * (posicao.entrada - preco_saida)
-                funding = quantidade * posicao.entrada * funding_por_candle * candles_aberta
-                custos = taxa * quantidade * (posicao.entrada + preco_saida) + funding
-                posicao.lucro = bruto - custos
+            funding_acum += qtd_rest * entrada_p * funding_por_candle  # funding do candle
+            hi, lo = maxima[i], minima[i]
+
+            saida = None  # (preco_saida, tag) quando a posição (resto) for encerrada
+            # 1) STOP / trailing (ordem a mercado, sofre slippage; prioridade = pior caso)
+            if (lo <= stop_atual) if longa else (hi >= stop_atual):
+                preco_saida = stop_atual * (1 - slippage) if longa else stop_atual * (1 + slippage)
+                lucro_travado = stop_atual > entrada_p if longa else stop_atual < entrada_p
+                saida = (preco_saida, "TRAIL" if lucro_travado else "STOP")
+            # 2) PARCIAL (ordem limitada, sem slippage): realiza fração no primeiro alvo (+1R)
+            if saida is None and gestao == "parcial" and not parcial_feita and (
+                    (hi >= alvo_parcial) if longa else (lo <= alvo_parcial)):
+                qtd_p = qtd_rest * FRAC_PARCIAL
+                gross_acum += (qtd_p * (alvo_parcial - entrada_p) if longa
+                               else qtd_p * (entrada_p - alvo_parcial))
+                fees_acum += taxa * qtd_p * alvo_parcial
+                qtd_rest -= qtd_p
+                parcial_feita = True
+                stop_atual = max(stop_atual, entrada_p) if longa else min(stop_atual, entrada_p)
+            # 3) ALVO cheio (ordem limitada, sem slippage)
+            if saida is None and ((hi >= posicao.alvo) if longa else (lo <= posicao.alvo)):
+                saida = (posicao.alvo, "ALVO")
+
+            if saida is not None:
+                preco_saida, tag = saida
+                gross_rest = (qtd_rest * (preco_saida - entrada_p) if longa
+                              else qtd_rest * (entrada_p - preco_saida))
+                fees_acum += taxa * qtd_rest * preco_saida
+                posicao.lucro = gross_acum + gross_rest - fees_acum - funding_acum
                 posicao.saida = preco_saida
                 posicao.saida_data = datas[i]
-                posicao.resultado = "STOP" if bateu_stop else "ALVO"
+                posicao.resultado = tag
                 capital += posicao.lucro
                 resultado.operacoes.append(posicao)
                 posicao = None
                 candles_aberta = 0
+                resultado.curva_capital.append(capital)
+                continue
+
+            # 4) atualiza melhor preço, breakeven e trailing para o PRÓXIMO candle
+            melhor = max(melhor, hi) if longa else min(melhor, lo)
+            if gestao in ("breakeven", "trailing", "parcial") and not be_ativo and (
+                    (melhor >= entrada_p + risco0) if longa else (melhor <= entrada_p - risco0)):
+                stop_atual = max(stop_atual, entrada_p) if longa else min(stop_atual, entrada_p)
+                be_ativo = True
+            if gestao == "trailing" and be_ativo:
+                novo = melhor - atr_stop * atr0 if longa else melhor + atr_stop * atr0
+                stop_atual = max(stop_atual, novo) if longa else min(stop_atual, novo)
             resultado.curva_capital.append(capital)
             continue
 
@@ -198,19 +235,26 @@ def executar(
 
         risco_unitario = abs(entrada - stop)
         quantidade = (capital * risco_por_operacao) / risco_unitario
-        posicao = Operacao(direcao=direcao, entrada_data=datas[i], entrada=entrada, stop=stop, alvo=alvo)
+        posicao = Operacao(direcao=direcao, entrada_data=datas[i], entrada=entrada,
+                           stop=stop, alvo=alvo, regime=str(regime_arr[i - 1]))
+        # inicializa o estado dinâmico da nova posição
+        stop_atual, risco0, atr0, melhor = stop, risco_unitario, atr_sinal, entrada
+        qtd_rest, gross_acum = quantidade, 0.0
+        fees_acum = taxa * quantidade * entrada  # taxa de entrada (nocional cheio)
+        funding_acum = 0.0
+        be_ativo = parcial_feita = False
+        alvo_parcial = entrada + risco0 if direcao == "COMPRA" else entrada - risco0
         candles_aberta = 0
 
     # posição ainda aberta no fim: fecha a mercado pelo último fechamento (com slippage)
     if posicao is not None:
+        longa = posicao.direcao == "COMPRA"
         ref = float(df["fechamento"].iloc[-1])
-        ultimo = ref * (1 - slippage) if posicao.direcao == "COMPRA" else ref * (1 + slippage)
-        if posicao.direcao == "COMPRA":
-            bruto = quantidade * (ultimo - posicao.entrada)
-        else:
-            bruto = quantidade * (posicao.entrada - ultimo)
-        funding = quantidade * posicao.entrada * funding_por_candle * candles_aberta
-        posicao.lucro = bruto - taxa * quantidade * (posicao.entrada + ultimo) - funding
+        ultimo = ref * (1 - slippage) if longa else ref * (1 + slippage)
+        gross_rest = (qtd_rest * (ultimo - posicao.entrada) if longa
+                      else qtd_rest * (posicao.entrada - ultimo))
+        fees_acum += taxa * qtd_rest * ultimo
+        posicao.lucro = gross_acum + gross_rest - fees_acum - funding_acum
         posicao.saida = ultimo
         posicao.saida_data = datas[-1]
         posicao.resultado = "ABERTA"

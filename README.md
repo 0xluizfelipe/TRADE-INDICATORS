@@ -78,6 +78,14 @@ O backtest inclui **taxa + slippage + funding**, então os números são conserv
 de propósito (backtests "limpos" enganam a favor). Essa pilha de validação é o que
 separa uma estratégia real de uma ilusão estatística (overfitting).
 
+O laboratório também mostra o **desempenho por regime de mercado** (ALTA/BAIXA/LATERAL)
+— revela quando uma estratégia só funciona em um regime — e aceita `--gestao`
+(fixo/breakeven/trailing/parcial) para comparar tipos de saída. Ex.:
+
+```
+python laboratorio.py BTCUSDT ETHUSDT SOLUSDT --tf 4h --gestao trailing
+```
+
 ### 5. Simulador: treinar com USDT fictício em preços reais (paper trading)
 
 ```
@@ -91,7 +99,11 @@ Abre uma interface no navegador (http://127.0.0.1:8765) com:
 - **Alavancagem de 1x a 25x** com preço de liquidação calculado e exibido no gráfico
 - **Gestão de risco embutida (guardrails):** stop obrigatório em posições alavancadas;
   botão "Calcular margem pelo risco" que dimensiona a posição para arriscar só 1–2%
-  do capital; avisos de alavancagem alta (10x+) e de exposição correlacionada
+  do capital; avisos de alavancagem alta (10x+), exposição correlacionada e de operar
+  **contra o regime** de mercado
+- **Regime de mercado ao vivo** (ALTA / BAIXA / LATERAL) no painel de análise
+- **Coach de disciplina:** analisa seu histórico e aponta SEUS padrões de erro —
+  operações sem stop, contra a tendência, liquidações e resultado por alavancagem
 - **Stop loss e alvo** — o botão "Sugerir" preenche com stop 2×ATR e alvo 1×ATR
 - **Score das 7 estratégias** direto na tela, com os critérios atendidos
 - **Botão "Varrer top 25"**: analisa as 25 maiores criptos em paralelo (~5 s) com a

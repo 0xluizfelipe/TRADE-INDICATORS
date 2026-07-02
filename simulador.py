@@ -189,6 +189,8 @@ class Manipulador(BaseHTTPRequestHandler):
                 self._responder(api_klines(params))
             elif url.path == "/api/conta":
                 self._responder(carteira.estado())
+            elif url.path == "/api/diario":
+                self._responder(carteira.diario())
             elif url.path == "/api/analise":
                 self._responder(api_analise(params))
             elif url.path == "/api/pares":
@@ -215,6 +217,9 @@ class Manipulador(BaseHTTPRequestHandler):
                     alavancagem=int(corpo.get("alavancagem", 1)),
                     stop=float(corpo["stop"]) if corpo.get("stop") else None,
                     alvo=float(corpo["alvo"]) if corpo.get("alvo") else None,
+                    regime=corpo.get("regime"),
+                    estrategia=corpo.get("estrategia"),
+                    score=int(corpo["score"]) if corpo.get("score") is not None else None,
                 )
                 self._responder(posicao)
             elif url.path == "/api/fechar":

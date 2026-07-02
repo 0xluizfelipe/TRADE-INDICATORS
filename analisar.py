@@ -142,12 +142,13 @@ def comando_backtest(args):
         atr_alvo=args.alvo,
         slippage=args.slippage / 100,
         funding_8h=args.funding / 100,
+        gestao=args.gestao,
         permitir_venda=not args.sem_venda,
     )
 
     linha("=")
     print(f"  BACKTEST  {simbolo}  |  {args.tf} (contexto {tf_maior})")
-    print(f"  Estratégia: {args.estrategia}  |  Stop {args.stop:g}x ATR  |  Alvo {args.alvo:g}x ATR")
+    print(f"  Estratégia: {args.estrategia}  |  Stop {args.stop:g}x ATR  |  Alvo {args.alvo:g}x ATR  |  Saída: {args.gestao}")
     print(f"  Período: {res.periodo_inicio:%d/%m/%Y} a {res.periodo_fim:%d/%m/%Y}")
     print(f"  Score mínimo: {args.limiar}  |  Risco por operação: {args.risco:.1f}%")
     print(f"  Custos: taxa 0,1% + slippage {args.slippage:g}%/lado + funding {args.funding:g}%/8h")
@@ -204,6 +205,8 @@ def main():
     parser.add_argument("--alvo", type=float, default=3.0, help="Alvo em múltiplos de ATR")
     parser.add_argument("--slippage", type=float, default=0.05, help="Slippage por lado, em %% (padrão 0,05)")
     parser.add_argument("--funding", type=float, default=0.01, help="Funding a cada 8h, em %% (padrão 0,01)")
+    parser.add_argument("--gestao", default="fixo", choices=["fixo", "breakeven", "trailing", "parcial"],
+                        help="Gestão da saída: stop fixo, breakeven, trailing ou saída parcial")
     parser.add_argument("--top", type=int, default=50)
     parser.add_argument("--sem-venda", action="store_true")
     args = parser.parse_args()
