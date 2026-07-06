@@ -30,6 +30,7 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from cripto import backtest, dados, estrategia
+from cripto.fluxo import adicionar_fluxo
 from cripto.indicadores import adicionar_indicadores
 from cripto.priceaction import adicionar_priceaction
 
@@ -41,12 +42,14 @@ def linha(caractere="-"):
     print(caractere * LARGURA)
 
 
-def carregar(simbolo: str, tf: str, candles: int = 500):
+def carregar(simbolo: str, tf: str, candles: int = 500, com_fluxo: bool = False):
     # apenas candles fechados: o candle em formação ainda pode mudar (repaint) e o
     # backtest — que valida a estratégia — também só enxerga candles fechados.
     tf_maior = TIMEFRAME_CONTEXTO[tf]
     df = adicionar_priceaction(adicionar_indicadores(
         dados.buscar_candles(simbolo, tf, candles, apenas_fechados=True)))
+    if com_fluxo:  # colunas de delta/CVD/funding/força relativa (estratégia fluxo)
+        df = adicionar_fluxo(df, simbolo, tf)
     df_maior = adicionar_indicadores(
         dados.buscar_candles(simbolo, tf_maior, max(400, candles // 4), apenas_fechados=True))
     return df, df_maior, tf_maior
@@ -54,7 +57,7 @@ def carregar(simbolo: str, tf: str, candles: int = 500):
 
 def comando_analise(args):
     simbolo = args.simbolo.upper()
-    df, df_maior, tf_maior = carregar(simbolo, args.tf)
+    df, df_maior, tf_maior = carregar(simbolo, args.tf, com_fluxo=args.estrategia == "fluxo")
     diag = estrategia.avaliar(df, df_maior, args.estrategia, args.stop, args.alvo)
 
     linha("=")
@@ -100,7 +103,7 @@ def comando_scan(args):
     for n, par in enumerate(pares, 1):
         print(f"\r  Analisando {n}/{len(pares)}: {par:<14}", end="", flush=True)
         try:
-            df, df_maior, _ = carregar(par, args.tf, 400)
+            df, df_maior, _ = carregar(par, args.tf, 400, com_fluxo=args.estrategia == "fluxo")
             diag = estrategia.avaliar(df, df_maior, args.estrategia, args.stop, args.alvo)
             resultados.append((par, diag))
             time.sleep(0.1)  # respeita o limite de requisições da Binance
@@ -136,7 +139,8 @@ def comando_scan(args):
 def comando_backtest(args):
     simbolo = args.simbolo.upper()
     print(f"Baixando {args.candles} candles de {simbolo} ({args.tf})...")
-    df, df_maior, tf_maior = carregar(simbolo, args.tf, args.candles)
+    df, df_maior, tf_maior = carregar(simbolo, args.tf, args.candles,
+                                      com_fluxo=args.estrategia == "fluxo")
     res = backtest.executar(
         df, df_maior,
         simbolo=simbolo,

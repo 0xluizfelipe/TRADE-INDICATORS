@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 
 BASE_URL = "https://api.binance.com/api/v3"
+FUTUROS_URL = "https://fapi.binance.com/fapi/v1"
 
 # Tokens alavancados e stablecoins que não fazem sentido analisar
 _IGNORAR_SUFIXOS = ("UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT")
@@ -24,12 +25,12 @@ _MINUTOS_INTERVALO = {
 }
 
 
-def _get(caminho: str, params: dict | None = None) -> object:
+def _get(caminho: str, params: dict | None = None, base: str = BASE_URL) -> object:
     """Faz uma requisição GET com até 3 tentativas."""
     ultimo_erro = None
     for tentativa in range(3):
         try:
-            resposta = _sessao.get(f"{BASE_URL}/{caminho}", params=params, timeout=20)
+            resposta = _sessao.get(f"{base}/{caminho}", params=params, timeout=20)
             if resposta.status_code == 429:  # limite de requisições: espera e tenta de novo
                 time.sleep(5 * (tentativa + 1))
                 continue
@@ -76,7 +77,11 @@ def buscar_candles(simbolo: str, intervalo: str = "4h", limite: int = 500,
         "tempo_fechamento", "volume_quote", "trades", "taker_base", "taker_quote", "ignorar",
     ])
     df["data"] = pd.to_datetime(df["tempo_abertura"], unit="ms", utc=True)
-    df = df.set_index("data")[["abertura", "maxima", "minima", "fechamento", "volume"]].astype(float)
+    # trades e taker_base (volume de compra agressiva) alimentam a análise de FLUXO
+    # de ordens — dados que a Binance já entrega em cada candle.
+    df = df.set_index("data")[[
+        "abertura", "maxima", "minima", "fechamento", "volume", "trades", "taker_base",
+    ]].astype(float)
     df = df[~df.index.duplicated(keep="first")].sort_index()
 
     if apenas_fechados and len(df):
@@ -106,6 +111,38 @@ def melhores_pares_usdt(quantidade: int = 50) -> list[str]:
 # conta a cada poucos segundos).
 _cache_precos: dict[str, tuple[float, float]] = {}
 _VALIDADE_PRECO = 2.0  # segundos
+
+
+def buscar_funding(simbolo: str, inicio_ms: int) -> pd.Series:
+    """Histórico do funding rate do contrato perpétuo (um registro a cada 8h).
+
+    Funding é dado de POSICIONAMENTO (quanto os alavancados pagam para manter a
+    posição), independente do preço — extremos indicam multidão de um lado só.
+    Devolve uma Série indexada pelo horário do funding, com folga de 40 dias antes
+    de `inicio_ms` para o aquecimento do percentil móvel. Levanta ValueError se o
+    par não tem perpétuo.
+    """
+    registros: list[dict] = []
+    fim = None
+    for _ in range(30):  # teto de segurança (~30k registros = 27 anos)
+        params: dict = {"symbol": simbolo.upper(), "limit": 1000}
+        if fim is not None:
+            params["endTime"] = fim
+        lote = _get("fundingRate", params, base=FUTUROS_URL)
+        if not lote:
+            break
+        registros = lote + registros
+        primeiro = int(lote[0]["fundingTime"])
+        if primeiro <= inicio_ms - 40 * 86_400_000 or len(lote) < 1000:
+            break
+        fim = primeiro - 1
+    if not registros:
+        raise ValueError(f"{simbolo}: sem histórico de funding (par sem perpétuo?)")
+    serie = pd.Series(
+        {pd.to_datetime(int(r["fundingTime"]), unit="ms", utc=True): float(r["fundingRate"])
+         for r in registros}).sort_index()
+    corte = pd.to_datetime(inicio_ms, unit="ms", utc=True) - pd.Timedelta(days=40)
+    return serie[serie.index >= corte]
 
 
 def preco_atual(simbolo: str) -> float:

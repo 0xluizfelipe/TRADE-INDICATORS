@@ -26,6 +26,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from cripto import backtest, dados
 from cripto.estrategia import ESTRATEGIAS, calcular_scores
+from cripto.fluxo import adicionar_fluxo
 from cripto.indicadores import adicionar_indicadores
 from cripto.priceaction import adicionar_priceaction
 
@@ -166,6 +167,7 @@ def main():
         print(f"Baixando {args.candles} candles de {simbolo} ({args.tf} + contexto {tf_maior})...")
         df = adicionar_priceaction(adicionar_indicadores(
             dados.buscar_candles(simbolo, args.tf, args.candles, apenas_fechados=True)))
+        df = adicionar_fluxo(df, simbolo, args.tf)  # p/ estratégia fluxo (tolera falha)
         df_maior = adicionar_indicadores(
             dados.buscar_candles(simbolo, tf_maior, max(400, args.candles // 4),
                                  apenas_fechados=True))

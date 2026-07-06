@@ -23,6 +23,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from cripto import dados, estrategia
 from cripto.carteira import Carteira
+from cripto.fluxo import adicionar_fluxo
 from cripto.indicadores import adicionar_indicadores
 from cripto.priceaction import adicionar_priceaction
 
@@ -56,6 +57,8 @@ def api_analise(params):
     # ("repaint") — e o backtest, que valida a estratégia, só olha candle fechado.
     df = adicionar_priceaction(adicionar_indicadores(
         dados.buscar_candles(simbolo, tf, 400, apenas_fechados=True)))
+    if nome == "fluxo":  # a estratégia de fluxo precisa das colunas de delta/funding/RS
+        df = adicionar_fluxo(df, simbolo, tf)
     df_maior = adicionar_indicadores(
         dados.buscar_candles(simbolo, TIMEFRAME_CONTEXTO[tf], 400, apenas_fechados=True))
     diag = estrategia.avaliar(df, df_maior, nome, atr_stop=2.0, atr_alvo=1.0)
@@ -95,6 +98,8 @@ def api_varredura(params):
         try:
             df = adicionar_priceaction(adicionar_indicadores(
                 dados.buscar_candles(par, tf, 400, apenas_fechados=True)))
+            if nome == "fluxo":
+                df = adicionar_fluxo(df, par, tf)
             df_maior = adicionar_indicadores(
                 dados.buscar_candles(par, TIMEFRAME_CONTEXTO[tf], 400, apenas_fechados=True))
             diag = estrategia.avaliar(df, df_maior, nome, atr_stop=2.0, atr_alvo=1.0)
@@ -135,7 +140,9 @@ def api_varredura_total(params):
         return em_cache[1]
 
     pares = dados.melhores_pares_usdt(25)
-    nomes = list(estrategia.ESTRATEGIAS)
+    # mantém o consenso original entre as 7 estratégias CLÁSSICAS; a estratégia
+    # de fluxo participa da varredura por FAMÍLIAS (botão próprio), não desta
+    nomes = [n for n in estrategia.ESTRATEGIAS if n != "fluxo"]
 
     def avaliar_par(par):
         try:
@@ -169,6 +176,86 @@ def api_varredura_total(params):
     linhas.sort(key=lambda r: (r["consenso"], r["score"]), reverse=True)
 
     resultado = {"tf": tf, "modo": "todas", "avaliados": len(linhas), "resultados": linhas}
+    _cache_varredura[chave] = (agora, resultado)
+    return resultado
+
+
+def api_varredura_familias(params):
+    """NOVO: consenso entre FAMÍLIAS de informação independentes.
+
+    Consenso entre as 7 estratégias clássicas conta juízes lendo o mesmo jornal
+    (todas leem preço OHLCV). Aqui cada família lê um DADO diferente:
+      PREÇO   — melhor das 7 estratégias clássicas (como no botão Consenso)
+      FLUXO   — delta/CVD/trade médio (compra vs venda agressiva, ordem a ordem)
+      FUNDING — posicionamento dos alavancados em extremo CONTRA a direção
+      FORÇA   — desempenho relativo vs BTC (demanda própria do ativo)
+    Concordância entre famílias independentes vale mais que 5/7 entre primas.
+    """
+    tf = params.get("tf", ["4h"])[0]
+    if tf not in TIMEFRAME_CONTEXTO:
+        raise ValueError(f"Timeframe inválido: {tf}")
+
+    chave = (tf, "__familias__")
+    agora = time.time()
+    em_cache = _cache_varredura.get(chave)
+    if em_cache and agora - em_cache[0] < _VALIDADE_VARREDURA:
+        return em_cache[1]
+
+    pares = dados.melhores_pares_usdt(25)
+    nomes_preco = [n for n in estrategia.ESTRATEGIAS if n != "fluxo"]
+
+    def avaliar_par(par):
+        try:
+            df = adicionar_priceaction(adicionar_indicadores(
+                dados.buscar_candles(par, tf, 400, apenas_fechados=True)))
+            df = adicionar_fluxo(df, par, tf)
+            df_maior = adicionar_indicadores(
+                dados.buscar_candles(par, TIMEFRAME_CONTEXTO[tf], 400, apenas_fechados=True))
+
+            sinais = [estrategia.avaliar(df, df_maior, nome, atr_stop=2.0, atr_alvo=1.0)
+                      for nome in nomes_preco]
+            for diag, nome in zip(sinais, nomes_preco):
+                diag["nome"] = nome
+            melhor = max(sinais, key=lambda d: d["score"])
+            consenso_preco = sum(1 for d in sinais if d["direcao"] == melhor["direcao"]
+                                 and d["score"] >= estrategia.LIMIAR_MODERADO)
+            compra = melhor["direcao"] == "COMPRA"
+
+            diag_fluxo = estrategia.avaliar(df, df_maior, "fluxo", atr_stop=2.0, atr_alvo=1.0)
+            score_fluxo = diag_fluxo["score_compra"] if compra else diag_fluxo["score_venda"]
+            fluxo_ok = score_fluxo >= estrategia.LIMIAR_MODERADO
+
+            ultimo = df.iloc[-1]
+            perc = ultimo.get("funding_perc")
+            if perc is None or perc != perc:  # NaN: par sem perpétuo ou sem dado
+                funding_ok = None
+            else:
+                funding_ok = bool(perc <= 0.15) if compra else bool(perc >= 0.85)
+            if par == "BTCUSDT":
+                rs_ok = None  # BTC é a própria referência da força relativa
+            else:
+                rs_ok = bool(ultimo["rs_sobe"]) if compra else bool(ultimo["rs_desce"])
+
+            familias = 1 + int(fluxo_ok) + int(funding_ok is True) + int(rs_ok is True)
+            return {
+                "simbolo": par, "direcao": melhor["direcao"], "score": melhor["score"],
+                "forca": melhor["forca"], "estrategia": melhor["nome"],
+                "consenso_preco": consenso_preco, "total_preco": len(nomes_preco),
+                "score_fluxo": score_fluxo, "fluxo_ok": fluxo_ok,
+                "funding_ok": funding_ok,
+                "funding_perc": None if perc is None or perc != perc else round(100 * perc),
+                "rs_ok": rs_ok,
+                "familias": familias, "total_familias": 4,
+                "preco": melhor["preco"],
+            }
+        except Exception:
+            return None  # par sem histórico suficiente ou falha de rede: ignora
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        linhas = [r for r in executor.map(avaliar_par, pares) if r]
+    linhas.sort(key=lambda r: (r["familias"], r["score_fluxo"], r["score"]), reverse=True)
+
+    resultado = {"tf": tf, "modo": "familias", "avaliados": len(linhas), "resultados": linhas}
     _cache_varredura[chave] = (agora, resultado)
     return resultado
 
@@ -219,6 +306,8 @@ class Manipulador(BaseHTTPRequestHandler):
                 self._responder(api_varredura(params))
             elif url.path == "/api/varredura_total":
                 self._responder(api_varredura_total(params))
+            elif url.path == "/api/varredura_familias":
+                self._responder(api_varredura_familias(params))
             else:
                 self._erro("Rota não encontrada", 404)
         except Exception as erro:

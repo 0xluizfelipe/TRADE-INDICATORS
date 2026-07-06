@@ -128,6 +128,55 @@ def _volume_acima(df, fator: float) -> pd.Series:
     return df["volume"] > fator * df["volume_media"]
 
 
+# --------- condições de FLUXO (colunas de cripto/fluxo.py; toleram ausência) ---------
+
+def _sem_coluna(df) -> pd.Series:
+    return pd.Series(False, index=df.index)
+
+
+def _cvd_tendencia(df, alta: bool) -> pd.Series:
+    if "cvd_ema" not in df.columns:
+        return _sem_coluna(df)
+    return df["cvd"] > df["cvd_ema"] if alta else df["cvd"] < df["cvd_ema"]
+
+
+def _delta_recente(df, alta: bool) -> pd.Series:
+    if "delta_ema" not in df.columns:
+        return _sem_coluna(df)
+    return df["delta_ema"] > 0 if alta else df["delta_ema"] < 0
+
+
+def _divergencia_cvd(df, alta: bool) -> pd.Series:
+    col = "fluxo_div_alta" if alta else "fluxo_div_baixa"
+    if col not in df.columns:
+        return _sem_coluna(df)
+    return _recente(df[col], 5)
+
+
+def _trade_medio_alto(df) -> pd.Series:
+    if "trade_medio_alto" not in df.columns:
+        return _sem_coluna(df)
+    return df["trade_medio_alto"]
+
+
+def _funding_contrario(df, alta: bool) -> pd.Series:
+    """Funding em extremo CONTRA a direção: multidão do lado errado = combustível.
+
+    Para COMPRA: funding no percentil baixo (multidão vendida paga para segurar
+    short — squeeze de alta pega essa turma). Para VENDA: o espelho.
+    """
+    if "funding_perc" not in df.columns:
+        return _sem_coluna(df)
+    return (df["funding_perc"] <= 0.15) if alta else (df["funding_perc"] >= 0.85)
+
+
+def _forca_relativa(df, alta: bool) -> pd.Series:
+    col = "rs_sobe" if alta else "rs_desce"
+    if col not in df.columns:
+        return _sem_coluna(df)
+    return df[col]
+
+
 # ---------------------------------------------------------------------------
 # Definição das estratégias
 # ---------------------------------------------------------------------------
@@ -322,6 +371,32 @@ _registrar(Estrategia(
         Criterio("adx_forca", 10, "ADX > 20 (tendência com força)",
                  lambda df, ctx: df["adx"] > 20,
                  lambda df, ctx: df["adx"] > 20),
+    ],
+))
+
+
+_registrar(Estrategia(
+    nome="fluxo",
+    titulo="Fluxo de ordens (delta, CVD, funding e força relativa)",
+    criterios=[
+        Criterio("cvd_tendencia", 20, "CVD acima/abaixo da própria média (fluxo direcional)",
+                 lambda df, ctx: _cvd_tendencia(df, True),
+                 lambda df, ctx: _cvd_tendencia(df, False)),
+        Criterio("delta_recente", 15, "Agressão recente a favor (delta médio dos últimos candles)",
+                 lambda df, ctx: _delta_recente(df, True),
+                 lambda df, ctx: _delta_recente(df, False)),
+        Criterio("divergencia_cvd", 20, "Divergência CVD × preço (extremo de preço sem fluxo)",
+                 lambda df, ctx: _divergencia_cvd(df, True),
+                 lambda df, ctx: _divergencia_cvd(df, False)),
+        Criterio("trade_medio", 10, "Trade médio acima da média (participação institucional)",
+                 lambda df, ctx: _trade_medio_alto(df),
+                 lambda df, ctx: _trade_medio_alto(df)),
+        Criterio("funding_contrario", 20, "Funding em extremo CONTRA a direção (combustível de squeeze)",
+                 lambda df, ctx: _funding_contrario(df, True),
+                 lambda df, ctx: _funding_contrario(df, False)),
+        Criterio("forca_relativa", 15, "Força relativa vs BTC a favor da direção",
+                 lambda df, ctx: _forca_relativa(df, True),
+                 lambda df, ctx: _forca_relativa(df, False)),
     ],
 ))
 

@@ -226,10 +226,12 @@
           <option value="divergencia">Divergência RSI</option>
           <option value="fibonacci">Fibonacci (golden zone)</option>
           <option value="tendencia_ema">Tendência EMA10</option>
+          <option value="fluxo">🧬 Fluxo (order flow)</option>
         </select>
         <button id="analisar" class="botao-primario">Analisar</button>
         <button id="varrer" title="Analisa as 25 maiores criptos com a estratégia selecionada e ranqueia os melhores gráficos">🔍 Top 25</button>
         <button id="varrer-todas" title="Roda TODAS as estratégias em cada um dos 25 maiores pares e ordena por consenso — o sinal mais confiável">🎯 Consenso</button>
+        <button id="varrer-familias" title="NOVO: consenso entre FAMÍLIAS de dados independentes — preço (7 estratégias), fluxo de ordens (delta/CVD/trade médio), funding (posicionamento dos alavancados) e força relativa vs BTC. Famílias diferentes leem dados diferentes; a concordância aqui vale mais que consenso entre estratégias que leem o mesmo preço.">🧬 Famílias</button>
         <div class="preco-bloco">
           <div id="preco-ao-vivo">—</div>
           <div id="contagem"></div>
@@ -802,7 +804,66 @@ function nomeCurto(nome) {
   return { confluencia: "Confluência", tendencia_pa: "Tend+PA",
            reversao: "Reversão", rompimento: "Rompimento",
            divergencia: "Divergência", fibonacci: "Fibonacci",
-           tendencia_ema: "EMA10" }[nome] || nome;
+           tendencia_ema: "EMA10", fluxo: "Fluxo" }[nome] || nome;
+}
+
+// ----------------------- varredura por FAMÍLIAS (novo) -----------------------
+async function varrerFamilias() {
+  const b = $("varrer-familias");
+  b.disabled = true;
+  b.textContent = "Cruzando 4 famílias de dados…";
+  try {
+    const v = await api(`/api/varredura_familias?tf=${tf}`);
+    const lista = $("varredura-lista");
+    $("varredura-painel").style.display = "block";
+    lista.innerHTML = "";
+
+    const melhor = v.resultados[0];
+    if (!melhor || melhor.familias < 2 || melhor.score < 55) {
+      $("varredura-cabecalho").innerHTML =
+        `<b>Nenhuma concordância forte entre famílias agora</b> <span class="criterio">—
+         cruzei preço, fluxo de ordens, funding e força relativa nos ${v.avaliados} maiores
+         pares (${tf}). Famílias independentes discordando = fique de fora.</span>`;
+    } else {
+      $("varredura-cabecalho").innerHTML =
+        `<b>🧬 Melhor concordância: ${melhor.simbolo}</b> — ${melhor.direcao},
+         ${melhor.familias}/4 famílias de dados independentes concordam
+         <span class="criterio">· ${tf} · preço + fluxo de ordens + funding + força relativa
+         · clique para abrir o gráfico</span>`;
+    }
+
+    const chip = (rotulo, ok, dica) => {
+      const simbolo2 = ok === null ? "–" : ok ? "✓" : "✗";
+      const cor = ok === null ? "var(--texto3)" : ok ? "var(--verde)" : "var(--texto3)";
+      return `<span class="criterio" title="${dica}" style="white-space:nowrap">${rotulo}
+        <b style="color:${cor}">${simbolo2}</b></span>`;
+    };
+    v.resultados.slice(0, 12).forEach((r, i) => {
+      const div = document.createElement("div");
+      div.className = "varr-linha" + (i === 0 && r.familias >= 3 ? " melhor" : "");
+      const corDir = r.direcao === "COMPRA" ? "var(--verde)" : "var(--vermelho)";
+      const famClasse = r.familias >= 3 ? "consenso forte" : "consenso";
+      div.innerHTML = `
+        <b style="width:100px">${r.simbolo}</b>
+        <span class="varr-dir" style="color:${corDir}">${r.direcao}</span>
+        <span class="${famClasse}" title="Famílias de dados INDEPENDENTES que concordam com a direção">${r.familias}/4 famílias</span>
+        <span class="criterio" title="Melhor estratégia clássica e consenso entre as 7 (família PREÇO)">preço ${r.score} · ${r.consenso_preco}/${r.total_preco}</span>
+        ${chip("🌊fluxo " + r.score_fluxo, r.fluxo_ok, "Fluxo de ordens: delta, CVD, divergência e trade médio (score da estratégia de fluxo na direção)")}
+        ${chip("💰funding", r.funding_ok, "Funding em extremo CONTRA a direção (percentil " + (r.funding_perc ?? "—") + ") = multidão do lado errado, combustível de squeeze")}
+        ${chip("💪vsBTC", r.rs_ok, "Força relativa vs BTC a favor da direção (– para o próprio BTC)")}
+        <span>${fmt(r.preco)}</span>`;
+      div.onclick = () => {
+        $("simbolo").value = r.simbolo;
+        $("estrategia").value = r.estrategia;
+        trocarPar();
+        definirDirecao(r.direcao);
+        analisar();
+      };
+      lista.appendChild(div);
+    });
+  } catch (e) { avisar("Falha na varredura por famílias: " + e.message, true); }
+  b.disabled = false;
+  b.textContent = "🧬 Famílias";
 }
 
 // ----------------------- formulário -----------------------
@@ -947,6 +1008,7 @@ $("sugerir").onclick = sugerirNiveis;
 $("analisar").onclick = analisar;
 $("varrer").onclick = varrer;
 $("varrer-todas").onclick = varrerTodas;
+$("varrer-familias").onclick = varrerFamilias;
 $("exportar").onclick = () => { window.location.href = "/api/exportar"; };
 $("reset").onclick = async () => {
   if (confirm("Zerar a carteira e apagar todo o histórico? (volta para 10.000 USDT)")) {
