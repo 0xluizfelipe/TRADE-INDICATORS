@@ -188,9 +188,34 @@ segurança fixas: risco por operação limitado a 2%, alavancagem de bot limitad
 uma posição por bot. Os bots operam **enquanto a janela do simulador estiver aberta**
 (não operam retroativamente; ao reabrir, retomam no próximo candle).
 
+Acompanhamento: cada card de bot mostra o **desempenho realizado** (resultado, taxa de
+acerto, fator de lucro, posições abertas) e o topo do card compara **Manual × Bots** —
+mesmo capital, mesmas regras. O botão **🔔 Notificações** no cabeçalho ativa avisos
+nativos do sistema quando um bot abre posição ou qualquer operação fecha
+(alvo/stop/liquidação), mesmo com a aba em segundo plano.
+
 > Honestidade obrigatória: bot não cria edge — ele só executa com disciplina uma
 > estratégia que você deve validar antes no `laboratorio.py` (walk-forward). Use os
 > bots para medir, no simulado, como a estratégia se comporta operada friamente.
+
+### 7. Deixar o simulador sempre ligado (bots operando)
+
+Os bots só avaliam candles enquanto o servidor está no ar. Para não depender de
+lembrar de abrir (nem perder horas de operação por uma janela fechada sem querer):
+
+```
+iniciar-simulador.bat
+```
+
+O script abre o simulador e o **reinicia sozinho** se ele cair; para parar de vez,
+feche a janela. Para iniciar automaticamente junto com o Windows, crie a tarefa uma
+única vez (Prompt de Comando, ajustando o caminho da pasta):
+
+```
+schtasks /Create /TN "Analisador Cripto" /SC ONLOGON /TR "\"C:\caminho\da\pasta\iniciar-simulador.bat\""
+```
+
+(para desfazer: `schtasks /Delete /TN "Analisador Cripto"`)
 
 ## As estratégias
 
