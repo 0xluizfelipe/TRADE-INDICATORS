@@ -301,6 +301,9 @@ class Manipulador(BaseHTTPRequestHandler):
         try:
             if url.path == "/":
                 self._responder(PAGINA.read_text(encoding="utf-8"), tipo="text/html")
+            elif url.path == "/lightweight-charts.js":
+                self._responder((PAGINA.parent / "lightweight-charts.js").read_text(encoding="utf-8"),
+                                tipo="application/javascript")
             elif url.path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()
