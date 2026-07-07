@@ -162,21 +162,36 @@ def main():
     tf_maior = TIMEFRAME_CONTEXTO[args.tf]
 
     # ----- carrega os dados uma única vez -----
+    # o backtest exige > 240 candles (210 de aquecimento + 30); um ativo com menos
+    # (ou que falhe ao baixar) é IGNORADO com aviso, em vez de derrubar a grade toda
+    MINIMO_CANDLES = 241
     mercado = {}
     for simbolo in simbolos:
         print(f"Baixando {args.candles} candles de {simbolo} ({args.tf} + contexto {tf_maior})...")
-        df = adicionar_priceaction(adicionar_indicadores(
-            dados.buscar_candles(simbolo, args.tf, args.candles, apenas_fechados=True)))
-        df = adicionar_fluxo(df, simbolo, args.tf)  # p/ estratégia fluxo (tolera falha)
-        df_maior = adicionar_indicadores(
-            dados.buscar_candles(simbolo, tf_maior, max(400, args.candles // 4),
-                                 apenas_fechados=True))
+        try:
+            df = adicionar_priceaction(adicionar_indicadores(
+                dados.buscar_candles(simbolo, args.tf, args.candles, apenas_fechados=True)))
+            df = adicionar_fluxo(df, simbolo, args.tf)  # p/ estratégia fluxo (tolera falha)
+            df_maior = adicionar_indicadores(
+                dados.buscar_candles(simbolo, tf_maior, max(400, args.candles // 4),
+                                     apenas_fechados=True))
+        except (ConnectionError, ValueError) as erro:
+            print(f"  AVISO: {simbolo} ignorado — {erro}")
+            continue
+        if len(df) < MINIMO_CANDLES:
+            print(f"  AVISO: {simbolo} ignorado — histórico curto ({len(df)} candles em "
+                  f"{args.tf}; mínimo {MINIMO_CANDLES}). Ativo listado há pouco tempo.")
+            continue
         corte = df.index[int(len(df) * PROPORCAO_TREINO)]
         mercado[simbolo] = (df, df_maior, corte)
 
+    if not mercado:
+        print("\nNenhum ativo com histórico suficiente para o laboratório.")
+        sys.exit(1)
+
     # ----- roda a grade de combinações -----
     print(f"\nTestando {len(ESTRATEGIAS)} estratégias x {len(SAIDAS)} saídas x "
-          f"{len(LIMIARES)} limiares em {len(simbolos)} ativos (com taxa+slippage+funding)...")
+          f"{len(LIMIARES)} limiares em {len(mercado)} ativos (com taxa+slippage+funding)...")
     resultados = []
     for nome_estrategia in ESTRATEGIAS:
         scores_cache = {
@@ -223,7 +238,7 @@ def main():
     L = 104
     print()
     print("=" * L)
-    print(f"  RESULTADO DO LABORATÓRIO  |  {', '.join(simbolos)}  |  {args.tf}"
+    print(f"  RESULTADO DO LABORATÓRIO  |  {', '.join(mercado)}  |  {args.tf}"
           + ("  |  SÓ A FAVOR DO REGIME" if args.regime else ""))
     print(f"  Aprova se: acerto >= {args.meta:.0f}% no teste, fator de lucro > 1 E o pior caso")
     print(f"  do acerto (IC 95%) ainda superar o ponto de empate da relação risco/retorno.")

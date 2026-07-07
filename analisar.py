@@ -107,15 +107,16 @@ def comando_scan(args):
     print(f"Buscando os {args.top} pares USDT com maior volume em 24h...")
     pares = dados.melhores_pares_usdt(args.top)
     resultados = []
+    falhas: list[str] = []
     for n, par in enumerate(pares, 1):
         print(f"\r  Analisando {n}/{len(pares)}: {par:<14}", end="", flush=True)
         try:
             df, df_maior, _ = carregar(par, args.tf, 400, com_fluxo=args.estrategia == "fluxo")
             diag = estrategia.avaliar(df, df_maior, args.estrategia, args.stop, args.alvo)
             resultados.append((par, diag))
-            time.sleep(0.1)  # respeita o limite de requisições da Binance
         except Exception:
-            continue
+            falhas.append(par)  # histórico curto ou falha de rede: informado no fim
+        time.sleep(0.1)  # respeita o limite de requisições da Binance
     print("\r" + " " * 40 + "\r", end="")
 
     resultados.sort(key=lambda item: item[1]["score"], reverse=True)
@@ -138,6 +139,10 @@ def comando_scan(args):
         print(f"  {par:<14}{diag['direcao']:<10}{diag['score']:>6}  "
               f"{diag['forca']:<10}{diag['preco']:>14,.6g}")
     linha("=")
+    if falhas:
+        exemplos = ", ".join(falhas[:5]) + ("..." if len(falhas) > 5 else "")
+        print(f"  Aviso: {len(falhas)}/{len(pares)} pares não analisados "
+              f"(histórico curto ou rede): {exemplos}")
     print("  Antes de operar, rode a análise completa e o backtest do par:")
     print(f"    python analisar.py PAR --tf {args.tf}")
     print(f"    python analisar.py PAR --tf {args.tf} --backtest")
