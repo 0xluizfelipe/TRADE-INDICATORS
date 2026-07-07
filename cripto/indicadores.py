@@ -23,7 +23,11 @@ def rsi(fechamento: pd.Series, periodo: int = 14) -> pd.Series:
     ganho = delta.clip(lower=0).ewm(alpha=1 / periodo, adjust=False).mean()
     perda = (-delta.clip(upper=0)).ewm(alpha=1 / periodo, adjust=False).mean()
     rs = ganho / perda.replace(0, np.nan)
-    return (100 - 100 / (1 + rs)).fillna(100.0)
+    resultado = 100 - 100 / (1 + rs)
+    # perda média zero: RSI 100 só se houve ganho; aquecimento e mercado parado
+    # (ganho = perda = 0) são NEUTROS (50) — antes viravam 100 e disparavam
+    # critérios de sobrecompra sem fundamento em ativos recém-listados.
+    return resultado.where(perda > 0, np.where(ganho > 0, 100.0, 50.0))
 
 
 def macd(fechamento: pd.Series, rapida: int = 12, lenta: int = 26, sinal: int = 9):
