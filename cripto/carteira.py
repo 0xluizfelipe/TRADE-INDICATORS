@@ -279,6 +279,56 @@ class Carteira:
             self.salvar()
             return registro
 
+    def fechar_parcial(self, id_posicao: str, fracao: float = 0.5) -> dict:
+        """Realiza uma FRAÇÃO da posição a mercado; o restante continua aberto.
+
+        Usado pela gestão de saída dos bots (modo 'parcial'): quantidade, margem e
+        taxa de abertura são reduzidas proporcionalmente e o realizado entra no
+        histórico com motivo PARCIAL. Stop, alvo e preço de liquidação do restante
+        não mudam (a alavancagem é a mesma)."""
+        if not 0 < fracao < 1:
+            raise ValueError("Fração da parcial deve ficar entre 0 e 1 (ex.: 0.5).")
+        with _trava:
+            posicao = next((p for p in self.posicoes if p["id"] == id_posicao), None)
+            if posicao is None:
+                raise ValueError(f"Posição {id_posicao} não encontrada.")
+            preco = dados.preco_atual(posicao["simbolo"])
+            sinal = 1 if posicao["direcao"] == "COMPRA" else -1
+            qtd = posicao["quantidade"] * fracao
+            margem = posicao["margem"] * fracao
+            taxa_abertura = posicao["taxa_paga"] * fracao
+            pnl_bruto = qtd * (preco - posicao["entrada"]) * sinal
+            taxa_fechamento = TAXA * qtd * preco
+            devolvido = max(0.0, margem + pnl_bruto - taxa_fechamento)
+
+            self.saldo += devolvido
+            posicao["quantidade"] -= qtd
+            posicao["margem"] -= margem
+            posicao["taxa_paga"] -= taxa_abertura
+            registro = {
+                "id": posicao["id"],
+                "simbolo": posicao["simbolo"],
+                "direcao": posicao["direcao"],
+                "alavancagem": posicao["alavancagem"],
+                "margem": margem,
+                "entrada": posicao["entrada"],
+                "saida": preco,
+                "motivo": "PARCIAL",
+                "resultado": devolvido - margem - taxa_abertura,
+                "tinha_stop": posicao.get("tinha_stop"),
+                "regime": posicao.get("regime", "?"),
+                "contra_regime": posicao.get("contra_regime"),
+                "estrategia": posicao.get("estrategia", "manual"),
+                "score": posicao.get("score"),
+                "nota": posicao.get("nota"),
+                "bot": posicao.get("bot"),
+                "abertura_ms": posicao["abertura_ms"],
+                "fechamento_ms": _agora_ms(),
+            }
+            self.historico.append(registro)
+            self.salvar()
+            return registro
+
     def editar(self, id_posicao: str, stop: float | None, alvo: float | None) -> dict:
         """Altera o stop e/ou o alvo de uma posição aberta (gestão ativa do trade).
 
