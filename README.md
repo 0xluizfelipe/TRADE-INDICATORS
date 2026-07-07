@@ -1,5 +1,7 @@
 # Analisador Cripto — análise técnica por confluência de indicadores
 
+**Versão 3.0** (julho/2026)
+
 Sistema que analisa gráficos de criptomoedas usando os indicadores mais consagrados
 do mercado **e price action** (padrões de candle, estrutura de mercado, suporte e
 resistência) e aponta oportunidades de compra e venda **apenas quando vários sinais
@@ -8,6 +10,22 @@ profissionais e pela literatura de análise técnica.
 
 Inclui um **laboratório de estratégias** que mede a assertividade histórica real de
 cada combinação estratégia/stop/alvo, validando em dados fora da amostra.
+
+## Novidades da versão 3.0
+
+Varredura completa do sistema com **14 bugs corrigidos e verificados** (detalhes em
+`RELATORIO-VARREDURA.md`). Destaques:
+
+- **Simulador**: preço/gráfico ao vivo voltaram a fluir (update travava entre candles),
+  lightweight-charts embarcada (funciona sem CDN), proteção contra requisições de
+  outros sites (CSRF), opção `--porta` e detecção de instância duplicada no Windows.
+- **Backtest mais honesto ainda**: o nocional agora é limitado ao capital (antes um
+  stop apertado criava alavancagem implícita impossível em spot).
+- **Carteira**: o replay offline não pula mais stops no candle parcial do último check.
+- **Indicadores**: RSI neutro (50) no aquecimento e a zona de ouro de Fibonacci passou
+  a exigir swing confirmado na direção (não lê mais repique de queda como pullback de alta).
+- **Robustez**: scan reporta pares que falharam, laboratório ignora ativo com histórico
+  curto sem derrubar a grade, erros de API com código e mensagem corretos.
 
 ## Instalação (uma vez só)
 
