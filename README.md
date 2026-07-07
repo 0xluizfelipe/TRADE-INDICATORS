@@ -167,6 +167,31 @@ protegida da sincronização do OneDrive). O botão "Reiniciar" zera tudo.
 Use o simulador por algumas semanas antes de pensar em dinheiro real: ele valida
 não só a estratégia, mas a SUA disciplina em segui-la.
 
+### 6. Bots automáticos: as estratégias operando sozinhas no simulador
+
+No card **"🤖 Bots automáticos"** você cria robôs que operam a carteira fictícia sem
+intervenção. Cada bot vigia **um par + um timeframe (15m/1h/4h/1d) + uma estratégia**
+(qualquer uma das 8) e, a cada **candle fechado** (sem repaint, igual ao backtest):
+
+1. recalcula o score; se ficar abaixo do limiar configurado, não faz nada;
+2. aplica o **filtro de regime** (opcional): COMPRA só em ALTA, VENDA só em BAIXA;
+3. faz a **análise de risco da operação**: margem dimensionada para arriscar
+   exatamente o % configurado do capital até o stop (máx. 2%), pula se a exposição
+   na mesma direção passar de 40% do capital ou se o bot já tiver posição aberta;
+4. abre a posição com **stop e alvo em múltiplos de ATR** (padrão 2×/1×, a config
+   aprovada no laboratório) — a partir daí a própria carteira executa
+   stop/alvo/liquidação automaticamente.
+
+Cada decisão (entrada, sinal fraco, pulo por guarda de risco, erro) fica registrada
+no **jornal do bot**, e as posições abertas por bot aparecem com o selo 🤖. Regras de
+segurança fixas: risco por operação limitado a 2%, alavancagem de bot limitada a 10x,
+uma posição por bot. Os bots operam **enquanto a janela do simulador estiver aberta**
+(não operam retroativamente; ao reabrir, retomam no próximo candle).
+
+> Honestidade obrigatória: bot não cria edge — ele só executa com disciplina uma
+> estratégia que você deve validar antes no `laboratorio.py` (walk-forward). Use os
+> bots para medir, no simulado, como a estratégia se comporta operada friamente.
+
 ## As estratégias
 
 São sete, todas combinando indicadores e price action por pontuação (0 a 100):
