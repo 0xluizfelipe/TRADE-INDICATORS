@@ -42,13 +42,15 @@ def _agora_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _intervalo_para_gap(minutos: float) -> tuple[str, int]:
-    """Escolhe o timeframe mais fino possível para cobrir o período offline."""
+def _intervalo_para_gap(minutos: float) -> tuple[str, int, int]:
+    """Escolhe o timeframe mais fino possível para cobrir o período offline.
+
+    Devolve (intervalo, nº de candles, duração do candle em minutos)."""
     for intervalo, tam in (("1m", 1), ("5m", 5), ("15m", 15), ("1h", 60), ("4h", 240)):
         candles = int(minutos / tam) + 3
         if candles <= 1000:
-            return intervalo, candles
-    return "1d", 1000
+            return intervalo, candles, tam
+    return "1d", 1000, 1440
 
 
 class Carteira:
@@ -344,13 +346,17 @@ class Carteira:
         minutos = (agora - posicao["ultimo_check_ms"]) / 60_000
         if minutos < 2:
             return False  # gap curto: o preço ao vivo já resolve, sem custo de baixar candles
-        intervalo, n_candles = _intervalo_para_gap(minutos)
+        intervalo, n_candles, tam_min = _intervalo_para_gap(minutos)
         try:
             candles = dados.buscar_candles(posicao["simbolo"], intervalo, n_candles)
         except Exception:
             return False  # sem rede; o preço ao vivo (ou a próxima consulta) tenta de novo
         inicio = posicao["ultimo_check_ms"]
-        recentes = candles[candles.index.asi8 // 10**6 >= inicio - 60_000]
+        # inclui o candle PARCIAL que contém o último check (abre até `tam_min` antes):
+        # excluí-lo pulava stops atingidos logo no começo do gap. O candle parcial pode
+        # conter movimento anterior ao check — assumir que conta é o pior caso, coerente
+        # com a regra "empate resolve pelo pior caso" da simulação.
+        recentes = candles[candles.index.asi8 // 10**6 >= inicio - tam_min * 60_000]
         for data, candle in recentes.iterrows():
             atingido = self._nivel_atingido(posicao, candle["minima"], candle["maxima"])
             if atingido:
