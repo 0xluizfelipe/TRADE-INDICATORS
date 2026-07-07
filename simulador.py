@@ -9,6 +9,7 @@ um centavo. Stop, alvo e liquidação são executados automaticamente — inclus
 de forma retroativa se o simulador ficar fechado por um tempo.
 """
 
+import argparse
 import json
 import sys
 import threading
@@ -264,6 +265,19 @@ class Manipulador(BaseHTTPRequestHandler):
     def log_message(self, formato, *args):
         pass  # silencia o log de cada requisição
 
+    def _origem_confiavel(self) -> bool:
+        """Barra requisições disparadas por páginas de terceiros (CSRF/DNS rebinding).
+
+        Qualquer site aberto no navegador consegue dar POST em 127.0.0.1 — sem esta
+        checagem, uma página maliciosa poderia resetar a carteira ou abrir posições.
+        O navegador sempre envia Host (e Origin em POSTs): ambos precisam ser locais.
+        """
+        locais = {f"127.0.0.1:{PORTA}", f"localhost:{PORTA}"}
+        if self.headers.get("Host", "") not in locais:
+            return False
+        origem = self.headers.get("Origin")
+        return origem is None or origem in {f"http://{h}" for h in locais}
+
     def _responder(self, conteudo, tipo="application/json", codigo=200, cabecalhos=None):
         corpo = (json.dumps(conteudo, ensure_ascii=False)
                  if tipo == "application/json" else conteudo).encode("utf-8")
@@ -279,6 +293,9 @@ class Manipulador(BaseHTTPRequestHandler):
         self._responder({"erro": str(mensagem)}, codigo=codigo)
 
     def do_GET(self):
+        if not self._origem_confiavel():
+            self._erro("Origem não autorizada", 403)
+            return
         url = urlparse(self.path)
         params = parse_qs(url.query)
         try:
@@ -316,6 +333,9 @@ class Manipulador(BaseHTTPRequestHandler):
             self._erro(erro, 500)
 
     def do_POST(self):
+        if not self._origem_confiavel():
+            self._erro("Origem não autorizada", 403)
+            return
         url = urlparse(self.path)
         tamanho = int(self.headers.get("Content-Length", 0))
         try:
@@ -361,15 +381,37 @@ class Manipulador(BaseHTTPRequestHandler):
             self._erro(erro, 500)
 
 
+class _Servidor(ThreadingHTTPServer):
+    # No Windows, o SO_REUSEADDR padrão do http.server deixa DUAS instâncias
+    # "dividirem" a mesma porta em silêncio (requisições vão para qualquer uma).
+    # Desligado, a segunda instância falha com OSError e avisamos direito.
+    allow_reuse_address = sys.platform != "win32"
+
+
 def main():
-    servidor = ThreadingHTTPServer(("127.0.0.1", PORTA), Manipulador)
+    global PORTA
+    parser = argparse.ArgumentParser(description="Simulador de trades (paper trading)")
+    parser.add_argument("--porta", type=int, default=PORTA,
+                        help=f"Porta do servidor local (padrão: {PORTA})")
+    parser.add_argument("--sem-navegador", action="store_true",
+                        help="Não abre o navegador automaticamente")
+    args = parser.parse_args()
+    PORTA = args.porta
+
     endereco = f"http://127.0.0.1:{PORTA}"
+    try:
+        servidor = _Servidor(("127.0.0.1", PORTA), Manipulador)
+    except OSError:
+        print(f"A porta {PORTA} já está em uso — provavelmente outro simulador aberto.")
+        print(f"Use a janela que já está rodando ({endereco}) ou inicie em outra porta:")
+        print(f"  python simulador.py --porta {PORTA + 1}")
+        sys.exit(1)
     print("=" * 56)
     print("  SIMULADOR DE TRADES — paper trading com USDT fictício")
     print(f"  Aberto em: {endereco}")
     print("  Para encerrar: Ctrl+C nesta janela")
     print("=" * 56)
-    if "--sem-navegador" not in sys.argv:
+    if not args.sem_navegador:
         threading.Timer(1.0, lambda: webbrowser.open(endereco)).start()
     try:
         servidor.serve_forever()
