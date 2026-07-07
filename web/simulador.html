@@ -207,6 +207,7 @@
     <div class="chip" title="Quanto você perde se TODOS os stops baterem agora (posições sem stop contam a margem inteira)"><label>Risco aberto</label><b id="risco-aberto">—</b></div>
   </div>
   <div class="acoes-topo">
+    <button id="notif" title="Notificações nativas do sistema quando um bot abrir posição ou uma operação fechar (funciona com a aba em segundo plano)">🔕 Notificações</button>
     <button id="exportar" title="Baixa o histórico completo em CSV (para planilha)">⬇ Exportar CSV</button>
     <button id="reset" title="Zera a carteira para 10.000 USDT">Reiniciar</button>
   </div>
@@ -391,6 +392,42 @@ function fmt(x, casas) {
 // escapa texto digitado pelo usuário antes de inseri-lo via innerHTML
 const esc = s => String(s).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ----------------------- notificações nativas -----------------------
+// avisa pelo sistema (mesmo com a aba em segundo plano) quando um bot abre
+// posição ou quando qualquer operação fecha (alvo/stop/liquidação/manual)
+let notifAtivas = localStorage.getItem("notif") === "1";
+let posIdsConhecidas = null;   // null = primeira carga (não notifica o estado inicial)
+let ultimoFechamentoMs = null;
+function podeNotificar() {
+  return notifAtivas && "Notification" in window && Notification.permission === "granted";
+}
+function notificar(titulo, corpo) {
+  if (podeNotificar()) try { new Notification(titulo, { body: corpo }); } catch (e) {}
+}
+function pintarNotif() {
+  $("notif").textContent = podeNotificar() ? "🔔 Notificações ON" : "🔕 Notificações";
+}
+function notificarMudancas(c) {
+  const fechPrev = ultimoFechamentoMs;
+  if (posIdsConhecidas !== null) {
+    c.posicoes.forEach(p => {
+      if (!posIdsConhecidas.has(p.id) && p.bot)
+        notificar(`🤖 Bot abriu ${p.direcao} ${p.simbolo}`,
+          `entrada ${fmt(p.entrada)} · stop ${fmt(p.stop)} · alvo ${fmt(p.alvo)} · margem ${fmt(p.margem, 2)} USDT`);
+    });
+    if (fechPrev !== null) c.historico.forEach(r => {
+      if (r.fechamento_ms > fechPrev) {
+        const emoji = { ALVO: "✅", MANUAL: "☑️", STOP: "🛑", LIQUIDACAO: "💥" }[r.motivo] || "•";
+        notificar(`${emoji} ${r.motivo}: ${r.bot ? "🤖 " : ""}${r.simbolo} ${r.direcao}`,
+          `resultado ${r.resultado >= 0 ? "+" : ""}${fmt(r.resultado, 2)} USDT`);
+      }
+    });
+  }
+  posIdsConhecidas = new Set(c.posicoes.map(p => p.id));
+  const maisNovo = c.historico.length ? c.historico[0].fechamento_ms : 0;
+  ultimoFechamentoMs = Math.max(fechPrev ?? 0, maisNovo);
+}
 function avisar(msg, tipo) {
   if (tipo === true) tipo = "erro";
   const div = document.createElement("div");
@@ -674,6 +711,7 @@ async function atualizarConta() {
   try {
     const c = await api("/api/conta");
     patrimonioAtual = c.patrimonio;
+    notificarMudancas(c);
     $("saldo").textContent = fmt(c.saldo, 2);
     $("patrimonio").textContent = fmt(c.patrimonio, 2);
     $("retorno").textContent = (c.retorno_pct >= 0 ? "+" : "") + fmt(c.retorno_pct, 2) + "%";
@@ -1201,6 +1239,28 @@ $("alavancagem").oninput = atualizarFormulario;
 $("abrir-botao").onclick = abrirPosicao;
 $("dimensionar").onclick = dimensionarPosicao;
 $("sugerir").onclick = sugerirNiveis;
+$("notif").onclick = async () => {
+  if (!("Notification" in window)) { avisar("Este navegador não suporta notificações.", "erro"); return; }
+  if (Notification.permission !== "granted") {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      notifAtivas = false;
+      localStorage.setItem("notif", "0");
+      pintarNotif();
+      avisar("Permissão negada pelo navegador — habilite nas configurações do site.", "aviso");
+      return;
+    }
+  }
+  notifAtivas = !notifAtivas;
+  localStorage.setItem("notif", notifAtivas ? "1" : "0");
+  pintarNotif();
+  if (notifAtivas) {
+    notificar("🔔 Notificações ativas", "Você será avisado quando um bot abrir posição ou uma operação fechar.");
+    avisar("Notificações do sistema ativadas.");
+  } else {
+    avisar("Notificações do sistema desativadas.");
+  }
+};
 $("bot-novo").onclick = () => {
   const form = $("bot-form");
   const abrir = form.style.display === "none";
@@ -1210,6 +1270,7 @@ $("bot-novo").onclick = () => {
 $("bot-cancelar").onclick = () => { $("bot-form").style.display = "none"; };
 $("bot-risco").oninput = previaBot;
 $("bot-criar").onclick = criarBot;
+pintarNotif();
 $("analisar").onclick = analisar;
 $("varrer").onclick = varrer;
 $("varrer-todas").onclick = varrerTodas;
