@@ -249,6 +249,10 @@ def executar(
 
         risco_unitario = abs(entrada - stop)
         quantidade = (capital * risco_por_operacao) / risco_unitario
+        # sem alavancagem: o nocional não pode passar do capital. Com stop apertado
+        # (ATR pequeno vs preço) o dimensionamento por risco pediria posição maior
+        # que o caixa; nesse caso o risco realizado fica MENOR que o alvo de risco.
+        quantidade = min(quantidade, capital / entrada)
         posicao = Operacao(direcao=direcao, entrada_data=datas[i], entrada=entrada,
                            stop=stop, alvo=alvo, regime=str(regime_arr[i - 1]))
         # inicializa o estado dinâmico da nova posição
