@@ -63,9 +63,14 @@ class MotorBots:
             temporario.replace(ARQUIVO_BOTS)
 
     def _anotar(self, bot: dict, tipo: str, msg: str):
-        """Registra um evento no jornal do bot (entrada/sinal/pulado/erro/info)."""
+        """Registra um evento no jornal do bot (entrada/sinal/pulado/gestao/erro/info)."""
         with self._trava:
-            bot["jornal"].append({"t": _agora_ms(), "tipo": tipo, "msg": str(msg)[:220]})
+            msg = str(msg)[:220]
+            # o mesmo erro repetido a cada passada (20s) não deve inundar o jornal
+            if (tipo == "erro" and bot["jornal"]
+                    and bot["jornal"][-1]["tipo"] == "erro" and bot["jornal"][-1]["msg"] == msg):
+                return
+            bot["jornal"].append({"t": _agora_ms(), "tipo": tipo, "msg": msg})
             del bot["jornal"][:-TAMANHO_JORNAL]
 
     # ------------------------- gestão -------------------------
@@ -73,12 +78,14 @@ class MotorBots:
     def criar(self, simbolo: str, tf: str, estrategia: str, limiar=70,
               stop=2.0, alvo=1.0, risco_pct=1.0, alavancagem=1,
               filtro_regime=True, direcoes=("COMPRA", "VENDA"),
-              nome: str | None = None) -> dict:
+              gestao: str = "fixo", nome: str | None = None) -> dict:
         simbolo = simbolo.upper().strip()
         if tf not in _MINUTOS_TF:
             raise ValueError(f"Timeframe inválido: {tf} (use {', '.join(_MINUTOS_TF)})")
         if estrategia not in ESTRATEGIAS:
             raise ValueError(f"Estratégia inválida: {estrategia}")
+        if gestao not in ("fixo", "breakeven", "trailing", "parcial"):
+            raise ValueError("Gestão de saída inválida (fixo, breakeven, trailing ou parcial).")
         limiar = int(limiar)
         if not 1 <= limiar <= 100:
             raise ValueError("Limiar deve ficar entre 1 e 100.")
@@ -104,6 +111,8 @@ class MotorBots:
             "limiar": limiar, "stop": stop, "alvo": alvo,
             "risco_pct": risco_pct, "alavancagem": alavancagem,
             "filtro_regime": bool(filtro_regime), "direcoes": direcoes,
+            "gestao": gestao,        # fixo | breakeven | trailing | parcial
+            "posicao_gestao": None,  # estado da gestão da posição aberta (persistido)
             "ativo": True, "criado_ms": _agora_ms(),
             "ultimo_candle_ms": 0,  # último candle já avaliado (evita avaliação dupla)
             "operacoes": 0,
@@ -163,6 +172,7 @@ class MotorBots:
             self.carteira.verificar_saidas()
         except Exception:
             pass
+        self._gerir_posicoes()
         with self._trava:
             pendentes = [b for b in self.bots if b["ativo"]]
         mudou = False
@@ -180,6 +190,104 @@ class MotorBots:
             mudou = True
         if mudou:
             self._salvar()
+
+    # ------------------------- gestão de saída -------------------------
+    # Validada no laboratório (RELATORIO-VARREDURA.md §5.1): trailing aprovou no
+    # walk-forward 1d com folga; em configs de alvo curto (ex.: stop 2.0/alvo 1.0)
+    # o gatilho de +1R fica além do alvo e a gestão raramente ativa (usar "fixo").
+
+    def _gerir_posicoes(self):
+        """Aplica breakeven/trailing/parcial às posições abertas pelos bots.
+
+        Roda mesmo com o bot PAUSADO: pausar impede novas entradas, não abandona
+        a posição já aberta."""
+        mudou = False
+        for bot in list(self.bots):
+            if bot.get("gestao", "fixo") == "fixo":
+                continue
+            pos = next((p for p in self.carteira.posicoes
+                        if p.get("bot") == bot["id"]), None)
+            if pos is None:
+                if bot.get("posicao_gestao") is not None:
+                    bot["posicao_gestao"] = None  # posição fechou; limpa o estado
+                    mudou = True
+                continue
+            try:
+                mudou = self._gerir_uma(bot, pos) or mudou
+            except Exception as erro:
+                self._anotar(bot, "erro", f"Gestão da posição: {erro}")
+        if mudou:
+            self._salvar()
+
+    def _gerir_uma(self, bot: dict, pos: dict) -> bool:
+        """Gestão de UMA posição. Segue as mesmas regras do backtest:
+        +1R -> breakeven (e parcial no modo parcial); trailing persegue o melhor
+        preço a stop×ATR de distância depois do breakeven. Devolve True se algo
+        do estado precisa ser persistido."""
+        if not pos.get("stop"):
+            return False  # sem stop inicial não existe o "R" de referência
+        longa = pos["direcao"] == "COMPRA"
+        mudou = False
+        est = bot.get("posicao_gestao")
+        if not est or est.get("id") != pos["id"]:
+            risco0 = abs(pos["entrada"] - pos["stop"])
+            est = {"id": pos["id"], "melhor": pos["entrada"], "risco0": risco0,
+                   "atr0": risco0 / bot["stop"],  # ATR da entrada (stop = mult × ATR)
+                   "be": False, "parcial": False, "stop_anotado": pos["stop"]}
+            bot["posicao_gestao"] = est
+            mudou = True
+
+        preco = dados.preco_atual(pos["simbolo"])
+        r, entrada = est["risco0"], pos["entrada"]
+        alvo_1r = entrada + r if longa else entrada - r
+        no_lucro_1r = (preco >= alvo_1r) if longa else (preco <= alvo_1r)
+
+        # 1) PARCIAL: realiza metade quando o preço ESTÁ a +1R (semântica de ordem
+        # limitada: só executa no nível, nunca abaixo dele)
+        if bot["gestao"] == "parcial" and not est["parcial"] and no_lucro_1r:
+            reg = self.carteira.fechar_parcial(pos["id"], 0.5)
+            est["parcial"] = True
+            mudou = True
+            self._anotar(bot, "gestao",
+                         f"Parcial de 50% a {reg['saida']:g} (+1R): {reg['resultado']:+.2f} "
+                         "USDT — o resto corre até o alvo.")
+
+        # 2) BREAKEVEN (breakeven/trailing/parcial): stop na entrada em +1R
+        if bot["gestao"] in ("breakeven", "trailing", "parcial") and not est["be"] and no_lucro_1r:
+            if self._mover_stop(pos, entrada):
+                est["be"] = True
+                est["stop_anotado"] = entrada
+                mudou = True
+                self._anotar(bot, "gestao",
+                             f"+1R atingido — stop movido para a entrada ({entrada:g}): risco zerado.")
+
+        # 3) TRAILING: após o breakeven, persegue o melhor preço a stop×ATR
+        if bot["gestao"] == "trailing":
+            melhor_antes = est["melhor"]
+            est["melhor"] = max(est["melhor"], preco) if longa else min(est["melhor"], preco)
+            if abs(est["melhor"] - melhor_antes) >= 0.2 * r:
+                mudou = True  # persiste o topo/fundo (sobrevive a reinício do simulador)
+            if est["be"]:
+                dist = bot["stop"] * est["atr0"]
+                novo = est["melhor"] - dist if longa else est["melhor"] + dist
+                melhora = (novo > pos["stop"]) if longa else (novo < pos["stop"])
+                if melhora and self._mover_stop(pos, novo):
+                    mudou = True
+                    # anota só em marcos (0,5×ATR) para não inundar o jornal
+                    if abs(novo - est["stop_anotado"]) >= 0.5 * est["atr0"]:
+                        self._anotar(bot, "gestao",
+                                     f"Trailing: stop {novo:g} (melhor preço {est['melhor']:g}).")
+                        est["stop_anotado"] = novo
+        return mudou
+
+    def _mover_stop(self, pos: dict, novo_stop: float) -> bool:
+        """Move o stop via carteira. False se o preço atual não permite o nível
+        agora (ex.: preço recuou abaixo dele) — tenta de novo na próxima passada."""
+        try:
+            self.carteira.editar(pos["id"], stop=novo_stop, alvo=pos["alvo"])
+            return True
+        except ValueError:
+            return False
 
     # ------------------------- decisão de operação -------------------------
 

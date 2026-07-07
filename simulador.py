@@ -397,6 +397,7 @@ class Manipulador(BaseHTTPRequestHandler):
                     alavancagem=corpo.get("alavancagem", 1),
                     filtro_regime=bool(corpo.get("filtro_regime", True)),
                     direcoes=corpo.get("direcoes") or ["COMPRA", "VENDA"],
+                    gestao=corpo.get("gestao", "fixo"),
                     nome=corpo.get("nome"),
                 ))
             elif url.path == "/api/bots/alternar":
