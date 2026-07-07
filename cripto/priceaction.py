@@ -148,14 +148,24 @@ def adicionar_priceaction(df: pd.DataFrame) -> pd.DataFrame:
 
     # ---------------- Fibonacci: zona de ouro (50%–61,8%) do último swing ----------------
     intervalo = (ult_topo - ult_fundo).replace(0, np.nan)
+    # A retração só faz sentido na direção do ÚLTIMO swing confirmado: pullback de
+    # alta exige fundo -> topo (topo mais recente); de baixa, o espelho. Sem essa
+    # checagem, o repique de uma queda era lido como "pullback de alta".
+    ordem = pd.Series(np.arange(len(df), dtype=float), index=df.index)
+    pos_topo = ordem.where(preco_topo.notna()).ffill()
+    pos_fundo = ordem.where(preco_fundo.notna()).ffill()
+    swing_de_alta = pos_topo > pos_fundo
+    swing_de_baixa = pos_fundo > pos_topo
     # Pullback de ALTA: após subir do fundo ao topo, preço recua para a zona 50–61,8%
     zona_long_topo = ult_topo - 0.5 * intervalo
     zona_long_fundo = ult_topo - 0.618 * intervalo
-    df["pa_fib_long"] = (l <= zona_long_topo) & (l >= zona_long_fundo) & (c >= zona_long_fundo)
+    df["pa_fib_long"] = ((l <= zona_long_topo) & (l >= zona_long_fundo)
+                         & (c >= zona_long_fundo) & swing_de_alta)
     # Pullback de BAIXA: após cair do topo ao fundo, preço sobe para a zona 50–61,8%
     zona_short_fundo = ult_fundo + 0.5 * intervalo
     zona_short_topo = ult_fundo + 0.618 * intervalo
-    df["pa_fib_short"] = (h >= zona_short_fundo) & (h <= zona_short_topo) & (c <= zona_short_topo)
+    df["pa_fib_short"] = ((h >= zona_short_fundo) & (h <= zona_short_topo)
+                          & (c <= zona_short_topo) & swing_de_baixa)
     df["pa_fib_long"] = df["pa_fib_long"].fillna(False)
     df["pa_fib_short"] = df["pa_fib_short"].fillna(False)
 
