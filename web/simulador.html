@@ -502,7 +502,11 @@ function criarEquity() {
 async function atualizarEquity() {
   try {
     const pontos = await api("/api/equity");
-    if (!pontos.length) return;
+    if (!pontos.length) {
+      // sem operações fechadas (ex.: carteira recém-reiniciada): limpa a curva antiga
+      if (equityCriado) { equitySerie.setData([]); $("equity-legenda").innerHTML = ""; }
+      return;
+    }
     if (!equityCriado) criarEquity();
     const porSegundo = new Map();
     pontos.forEach(p => porSegundo.set(Math.floor(p.t / 1000), p.v));
