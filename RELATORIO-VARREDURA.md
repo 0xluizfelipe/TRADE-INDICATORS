@@ -179,3 +179,30 @@ varredura: havia outra instância rodando). Adicionar `--porta` e mensagem amig�
 - Price action vetorizado sem olhar o futuro (fractais confirmados com shift) — auditado, correto.
 - Simulador com guardrails de risco (stop obrigatório alavancado, avisos de exposição, coach).
 - Gravação atômica da carteira fora do OneDrive — decisão consciente e correta.
+
+---
+
+## 5. VALIDAÇÃO WALK-FORWARD PARA OS BOTS (07/07/2026, motor corrigido)
+
+Base: BTC, ETH, SOL, BNB, XRP · 3000 candles 4h (~2 anos) e 2500 candles 1d (~6,8 anos) ·
+saída fixa (a que os bots executam) · custos completos (taxa+slippage+funding).
+
+| Bateria | Aprovadas nos 3 filtros | Walk-forward agregado (OOS) |
+|---|---|---|
+| 4h SEM regime | nenhuma | 111 ops · 38,7% · FL 0,78 — **reprovado** |
+| 4h COM regime | `reversao 2.0/1.0 lim70` (83,9% teste, FL 2,05, IC95 67,4% > 66,7%) · `reversao 1.5/1.0 lim70` · `confluencia 1.5/1.0 lim70` (marginal) | 67 ops · 56,7% · FL 1,00 — empate |
+| 1d COM regime | nenhuma pela meta de acerto | 109 ops · 44,0% · **FL 1,41** (3 de 4 janelas lucrativas; escolha recorrente: `rompimento 1.5/3.0 lim85`) — veredito formal "reprovado" **pela meta de acerto**, mas lucrativo em FL |
+
+Leitura honesta:
+1. **Sem filtro de regime, nada se sustenta** — bots sem `filtro de regime` não devem ser ligados.
+2. A config mais defensável para bot em 4h é **`reversao` stop 2.0×ATR / alvo 1.0×ATR, limiar 70,
+   regime ON** (aprovada nos 3 filtros com N=88; funciona em ALTA 69% e BAIXA 67%). Ressalva: o
+   walk-forward que TROCA de config por janela empatou — o edge está na config fixa, não na
+   re-otimização periódica.
+3. No 1d, o walk-forward convergiu 3 janelas seguidas para **`rompimento` 1.5/3.0 lim85 (RR 2:1)**
+   e ficou lucrativo fora da amostra por ~5 anos (FL 1,41) com acerto de só 44% — perfil "muitos
+   stops pequenos, alvos grandes", ideal para bot (não dói na disciplina) e viável porque com
+   RR 2:1 o ponto de empate é 33%.
+4. **Defeito de critério encontrado:** o veredito do walk-forward exige acerto ≥ meta (65%) mesmo
+   quando as configs escolhidas têm RR 2:1 (empate 33%) — reprova resultados lucrativos. Corrigir
+   para julgar por FL/expectativa (ou empate da RR média das janelas) na próxima iteração.
