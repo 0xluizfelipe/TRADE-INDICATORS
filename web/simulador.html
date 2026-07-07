@@ -306,6 +306,7 @@
 
     <div class="cartao">
       <h2>🤖 Bots automáticos <span class="direita criterio" id="bots-resumo"></span></h2>
+      <div id="bots-comparativo" class="criterio" style="margin-bottom:8px"></div>
       <div id="bots-lista"><div class="vazio">Nenhum bot criado. Um bot vigia um par em um
         timeframe com uma estratégia e opera sozinho a cada candle fechado — com stop, alvo
         e risco dimensionados automaticamente.</div></div>
@@ -738,13 +739,23 @@ function horaBot(ms) {
   return new Date(ms).toLocaleString("pt-BR",
     { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-function cartaoBot(b, jornalAberto) {
+function cartaoBot(b, jornalAberto, dp) {
   const div = document.createElement("div");
   div.className = "posicao";
   const icone = { entrada: "✅", sinal: "·", pulado: "⏭️", erro: "⚠️", info: "ℹ️" };
   const jornal = b.jornal.map(e =>
     `<div class="criterio">${horaBot(e.t)} ${icone[e.tipo] || "·"} ${esc(e.msg)}</div>`).join("")
     || '<div class="criterio">sem eventos ainda</div>';
+  let desemp = "📊 sem operações ainda — vigiando o mercado";
+  if (dp && (dp.n || dp.abertas)) {
+    const cor = dp.total >= 0 ? "ganho" : "perda";
+    const partes = [];
+    if (dp.n) partes.push(`<b class="${cor}">${dp.total >= 0 ? "+" : ""}${fmt(dp.total, 2)} USDT</b>`,
+      `${dp.n} fechada(s)`, `${fmt(dp.acerto, 0)}% acerto`,
+      `fator ${dp.fator === null ? "∞" : fmt(dp.fator, 2)}`);
+    if (dp.abertas) partes.push(`${dp.abertas} aberta(s) agora`);
+    desemp = "📊 " + partes.join(" · ");
+  }
   div.innerHTML = `
     <div class="topo">
       <b><span style="color:${b.ativo ? "var(--verde)" : "var(--texto3)"}">●</span> ${esc(b.nome)}</b>
@@ -756,6 +767,7 @@ function cartaoBot(b, jornalAberto) {
       <span>stop ${b.stop}×ATR · alvo ${b.alvo}×ATR</span>
       <span>risco ${b.risco_pct}% · ${b.alavancagem}x${b.filtro_regime ? " · a favor do regime" : ""}</span>
     </div>
+    <div class="criterio" style="margin-top:5px">${desemp}</div>
     <details data-bot="${b.id}" style="margin-top:6px"${jornalAberto ? " open" : ""}>
       <summary class="criterio" style="cursor:pointer">jornal de decisões</summary>
       <div style="max-height:150px;overflow:auto;margin-top:4px">${jornal}</div>
@@ -793,6 +805,22 @@ async function atualizarBots() {
     }
     const ativos = d.bots.filter(b => b.ativo).length;
     $("bots-resumo").textContent = d.bots.length ? `${ativos} ativo(s) de ${d.bots.length}` : "";
+    // comparativo manual × bots (resultado realizado, mesmas regras e capital)
+    const dp = d.desempenho || {};
+    const man = dp.manual;
+    const bots = Object.entries(dp).filter(([k]) => k !== "manual").map(([, v]) => v);
+    const agg = bots.reduce((a, v) => ({ n: a.n + v.n, total: a.total + v.total,
+      vit: a.vit + v.vitorias }), { n: 0, total: 0, vit: 0 });
+    if ((man && man.n) || agg.n) {
+      const fmtLado = (rot, n, total, acerto) => n
+        ? `${rot}: <b class="${total >= 0 ? "ganho" : "perda"}">${total >= 0 ? "+" : ""}${fmt(total, 2)}</b> em ${n} op (${fmt(acerto, 0)}%)`
+        : `${rot}: sem operações fechadas`;
+      $("bots-comparativo").innerHTML = "⚖️ " +
+        fmtLado("Manual", man ? man.n : 0, man ? man.total : 0, man ? man.acerto : 0) + " · " +
+        fmtLado("Bots", agg.n, agg.total, agg.n ? 100 * agg.vit / agg.n : 0);
+    } else {
+      $("bots-comparativo").innerHTML = "";
+    }
     // preserva quais jornais estavam abertos antes de redesenhar
     const abertos = new Set([...document.querySelectorAll("#bots-lista details[open]")]
       .map(el => el.dataset.bot));
@@ -803,7 +831,7 @@ async function atualizarBots() {
         'e risco dimensionados automaticamente.</div>';
     } else {
       lista.innerHTML = "";
-      d.bots.forEach(b => lista.appendChild(cartaoBot(b, abertos.has(b.id))));
+      d.bots.forEach(b => lista.appendChild(cartaoBot(b, abertos.has(b.id), dp[b.id])));
     }
   } catch (e) { /* tenta no próximo ciclo */ }
 }

@@ -338,6 +338,7 @@ class Manipulador(BaseHTTPRequestHandler):
                     "bots": motor_bots.listar(),
                     "estrategias": {n: e.titulo for n, e in estrategia.ESTRATEGIAS.items()},
                     "tfs": list(TIMEFRAME_CONTEXTO),
+                    "desempenho": carteira.resumo_por_origem(),
                 })
             else:
                 self._erro("Rota não encontrada", 404)

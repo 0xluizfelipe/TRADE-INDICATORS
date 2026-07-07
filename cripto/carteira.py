@@ -468,6 +468,42 @@ class Carteira:
                 },
             }
 
+    def resumo_por_origem(self) -> dict:
+        """Resultado REALIZADO agrupado por origem: 'manual' e cada bot (pelo id).
+
+        Compara a disciplina do automático com a operação manual — mesmo capital,
+        mesmas regras. Fator None significa "sem perdas ainda" (equivale a ∞)."""
+        with _trava:
+            hist = list(self.historico)
+            abertas_por: dict[str, int] = {}
+            for p in self.posicoes:
+                chave = p.get("bot") or "manual"
+                abertas_por[chave] = abertas_por.get(chave, 0) + 1
+
+        grupos: dict[str, dict] = {}
+        for r in hist:
+            chave = r.get("bot") or "manual"
+            g = grupos.setdefault(chave, {"n": 0, "vitorias": 0, "total": 0.0,
+                                          "_ganhos": 0.0, "_perdas": 0.0})
+            g["n"] += 1
+            g["total"] += r["resultado"]
+            if r["resultado"] > 0:
+                g["vitorias"] += 1
+                g["_ganhos"] += r["resultado"]
+            else:
+                g["_perdas"] += -r["resultado"]
+        for g in grupos.values():
+            g["acerto"] = round(100 * g["vitorias"] / g["n"], 1)
+            g["fator"] = round(g["_ganhos"] / g["_perdas"], 2) if g["_perdas"] > 0 else None
+            g["total"] = round(g["total"], 2)
+            del g["_ganhos"], g["_perdas"]
+        for chave, n in abertas_por.items():
+            grupos.setdefault(chave, {"n": 0, "vitorias": 0, "total": 0.0,
+                                      "acerto": 0.0, "fator": None})["abertas"] = n
+        for g in grupos.values():
+            g.setdefault("abertas", 0)
+        return grupos
+
     def curva_patrimonio(self) -> list[dict]:
         """Curva do capital REALIZADO: saldo inicial + resultado acumulado das
         operações fechadas, ponto a ponto. (PnL de posições abertas não entra —
