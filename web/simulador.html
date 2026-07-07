@@ -305,6 +305,49 @@
     </div>
 
     <div class="cartao">
+      <h2>🤖 Bots automáticos <span class="direita criterio" id="bots-resumo"></span></h2>
+      <div id="bots-lista"><div class="vazio">Nenhum bot criado. Um bot vigia um par em um
+        timeframe com uma estratégia e opera sozinho a cada candle fechado — com stop, alvo
+        e risco dimensionados automaticamente.</div></div>
+      <button id="bot-novo" style="width:100%;margin-top:6px">+ Novo bot</button>
+      <div id="bot-form" style="display:none;margin-top:9px" class="formulario">
+        <div class="dupla">
+          <div><label>Par</label><input id="bot-simbolo" list="lista-pares" value="BTCUSDT" style="width:100%"></div>
+          <div><label>Timeframe</label>
+            <select id="bot-tf" style="width:100%">
+              <option>15m</option><option>1h</option><option selected>4h</option><option>1d</option>
+            </select></div>
+        </div>
+        <div><label>Estratégia</label><select id="bot-estrategia" style="width:100%"></select></div>
+        <div class="dupla">
+          <div><label>Score mínimo (limiar)</label><input id="bot-limiar" type="number" value="70" min="1" max="100" style="width:100%"></div>
+          <div><label>Risco por operação (%) — máx 2</label><input id="bot-risco" type="number" value="1" min="0.1" max="2" step="0.1" style="width:100%"></div>
+        </div>
+        <div class="dupla">
+          <div><label>Stop (× ATR)</label><input id="bot-stop" type="number" value="2" min="0.1" step="0.1" style="width:100%"></div>
+          <div><label>Alvo (× ATR)</label><input id="bot-alvo" type="number" value="1" min="0.1" step="0.1" style="width:100%"></div>
+        </div>
+        <div class="dupla">
+          <div><label>Alavancagem (máx 10x p/ bots)</label><input id="bot-alav" type="number" value="1" min="1" max="10" style="width:100%"></div>
+          <div><label>Direções permitidas</label>
+            <div style="display:flex;gap:12px;padding-top:7px">
+              <label style="display:flex;gap:5px;align-items:center;margin:0"><input type="checkbox" id="bot-compra" checked> COMPRA</label>
+              <label style="display:flex;gap:5px;align-items:center;margin:0"><input type="checkbox" id="bot-venda" checked> VENDA</label>
+            </div>
+          </div>
+        </div>
+        <label style="display:flex;gap:6px;align-items:center;margin:0">
+          <input type="checkbox" id="bot-regime" checked> Só operar a favor do regime (COMPRA em ALTA, VENDA em BAIXA)
+        </label>
+        <div class="criterio" id="bot-previa"></div>
+        <div class="pos-acoes" style="margin:0">
+          <button id="bot-criar" class="botao-primario">Criar bot</button>
+          <button id="bot-cancelar">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="cartao">
       <h2>Posições abertas <span class="direita criterio" id="qtd-posicoes"></span></h2>
       <div id="posicoes"><div class="vazio">Nenhuma posição aberta.</div></div>
     </div>
@@ -334,6 +377,7 @@ let simbolo = "BTCUSDT", tf = "4h", direcao = "COMPRA";
 let chart, serie, volSerie, ema50Serie, ema200Serie, bbSuperior, bbInferior;
 let equityChart, equitySerie, equityCriado = false, ultimoTotalFechadas = -1;
 let linhasPreco = [], ultimaAnalise = null, candlesAtuais = [], ultimoPrecoVivo = null;
+let patrimonioAtual = null;
 const TF_MINUTOS = { "15m": 15, "1h": 60, "4h": 240, "1d": 1440 };
 const indicadoresAtivos = { ema50: true, ema200: true, bb: false, vol: true };
 
@@ -548,7 +592,7 @@ function cartaoPosicao(p) {
   const corDir = p.direcao === "COMPRA" ? "var(--verde)" : "var(--vermelho)";
   div.innerHTML = `
     <div class="topo">
-      <b><span style="color:${corDir}">${p.direcao === "COMPRA" ? "▲" : "▼"}</span> ${p.simbolo} · ${p.alavancagem}x</b>
+      <b><span style="color:${corDir}">${p.direcao === "COMPRA" ? "▲" : "▼"}</span> ${p.bot ? "🤖 " : ""}${p.simbolo} · ${p.alavancagem}x</b>
       <span class="pnl ${cor}">${p.pnl >= 0 ? "+" : ""}${fmt(p.pnl, 2)} <small>(${fmt(p.pnl_pct, 1)}%)</small></span>
     </div>
     <div class="detalhes">
@@ -628,6 +672,7 @@ function pintarRisco(c) {
 async function atualizarConta() {
   try {
     const c = await api("/api/conta");
+    patrimonioAtual = c.patrimonio;
     $("saldo").textContent = fmt(c.saldo, 2);
     $("patrimonio").textContent = fmt(c.patrimonio, 2);
     $("retorno").textContent = (c.retorno_pct >= 0 ? "+" : "") + fmt(c.retorno_pct, 2) + "%";
@@ -685,6 +730,114 @@ async function atualizarCoach() {
       `<div class="licao${l.includes("👏") ? " ok" : ""}">${l}</div>`).join("");
     el.innerHTML = `<div class="coach-nums">${nums}</div>${licoes}`;
   } catch (e) { /* tenta no próximo ciclo */ }
+}
+
+// ----------------------- bots automáticos -----------------------
+let botsEstrategiasOk = false;
+function horaBot(ms) {
+  return new Date(ms).toLocaleString("pt-BR",
+    { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+function cartaoBot(b, jornalAberto) {
+  const div = document.createElement("div");
+  div.className = "posicao";
+  const icone = { entrada: "✅", sinal: "·", pulado: "⏭️", erro: "⚠️", info: "ℹ️" };
+  const jornal = b.jornal.map(e =>
+    `<div class="criterio">${horaBot(e.t)} ${icone[e.tipo] || "·"} ${esc(e.msg)}</div>`).join("")
+    || '<div class="criterio">sem eventos ainda</div>';
+  div.innerHTML = `
+    <div class="topo">
+      <b><span style="color:${b.ativo ? "var(--verde)" : "var(--texto3)"}">●</span> ${esc(b.nome)}</b>
+      <span class="criterio">${b.operacoes} operação(ões)</span>
+    </div>
+    <div class="detalhes">
+      <span>${b.simbolo} · ${b.tf} · ${nomeCurto(b.estrategia)}</span>
+      <span>limiar ${b.limiar} · ${b.direcoes.join(" + ")}</span>
+      <span>stop ${b.stop}×ATR · alvo ${b.alvo}×ATR</span>
+      <span>risco ${b.risco_pct}% · ${b.alavancagem}x${b.filtro_regime ? " · a favor do regime" : ""}</span>
+    </div>
+    <details data-bot="${b.id}" style="margin-top:6px"${jornalAberto ? " open" : ""}>
+      <summary class="criterio" style="cursor:pointer">jornal de decisões</summary>
+      <div style="max-height:150px;overflow:auto;margin-top:4px">${jornal}</div>
+    </details>
+    <div class="pos-acoes">
+      <button data-acao="alternar">${b.ativo ? "Pausar" : "Retomar"}</button>
+      <button data-acao="excluir">Excluir</button>
+    </div>`;
+  div.querySelector('[data-acao="alternar"]').onclick = async ev => {
+    ev.target.disabled = true;
+    try {
+      const r = await api("/api/bots/alternar", { id: b.id });
+      avisar(`Bot "${r.nome}" ${r.ativo ? "retomado" : "pausado"}.`);
+      atualizarBots();
+    } catch (e) { avisar(e.message, true); ev.target.disabled = false; }
+  };
+  div.querySelector('[data-acao="excluir"]').onclick = async ev => {
+    if (!confirm(`Excluir o bot "${b.nome}"? Posições já abertas continuam com stop/alvo ativos.`)) return;
+    ev.target.disabled = true;
+    try {
+      await api("/api/bots/excluir", { id: b.id });
+      avisar(`Bot "${b.nome}" excluído.`);
+      atualizarBots();
+    } catch (e) { avisar(e.message, true); ev.target.disabled = false; }
+  };
+  return div;
+}
+async function atualizarBots() {
+  try {
+    const d = await api("/api/bots");
+    if (!botsEstrategiasOk) {
+      $("bot-estrategia").innerHTML = Object.entries(d.estrategias)
+        .map(([n, t]) => `<option value="${n}">${t}</option>`).join("");
+      botsEstrategiasOk = true;
+    }
+    const ativos = d.bots.filter(b => b.ativo).length;
+    $("bots-resumo").textContent = d.bots.length ? `${ativos} ativo(s) de ${d.bots.length}` : "";
+    // preserva quais jornais estavam abertos antes de redesenhar
+    const abertos = new Set([...document.querySelectorAll("#bots-lista details[open]")]
+      .map(el => el.dataset.bot));
+    const lista = $("bots-lista");
+    if (!d.bots.length) {
+      lista.innerHTML = '<div class="vazio">Nenhum bot criado. Um bot vigia um par em um ' +
+        'timeframe com uma estratégia e opera sozinho a cada candle fechado — com stop, alvo ' +
+        'e risco dimensionados automaticamente.</div>';
+    } else {
+      lista.innerHTML = "";
+      d.bots.forEach(b => lista.appendChild(cartaoBot(b, abertos.has(b.id))));
+    }
+  } catch (e) { /* tenta no próximo ciclo */ }
+}
+function previaBot() {
+  const risco = parseFloat($("bot-risco").value) || 0;
+  $("bot-previa").textContent = (patrimonioAtual && risco)
+    ? `Análise de risco: cada operação arriscará ~${fmt(patrimonioAtual * risco / 100, 2)} USDT `
+      + `(${risco}% do patrimônio) até o stop. Guardas: 1 posição por bot, exposição por direção ≤ 40%.`
+    : "";
+}
+async function criarBot() {
+  const b = $("bot-criar");
+  b.disabled = true;
+  try {
+    const direcoes = [];
+    if ($("bot-compra").checked) direcoes.push("COMPRA");
+    if ($("bot-venda").checked) direcoes.push("VENDA");
+    const novo = await api("/api/bots/criar", {
+      simbolo: $("bot-simbolo").value.toUpperCase().trim(),
+      tf: $("bot-tf").value,
+      estrategia: $("bot-estrategia").value,
+      limiar: $("bot-limiar").value,
+      stop: $("bot-stop").value,
+      alvo: $("bot-alvo").value,
+      risco_pct: $("bot-risco").value,
+      alavancagem: $("bot-alav").value,
+      filtro_regime: $("bot-regime").checked,
+      direcoes,
+    });
+    avisar(`Bot "${novo.nome}" criado — avalia o último candle fechado em instantes.`);
+    $("bot-form").style.display = "none";
+    atualizarBots();
+  } catch (e) { avisar(e.message, true); }
+  b.disabled = false;
 }
 
 // ----------------------- análise -----------------------
@@ -997,11 +1150,13 @@ montarTfs();
 carregarCandles();
 atualizarConta();
 atualizarEquity();
+atualizarBots();
 api("/api/pares").then(ps =>
   $("lista-pares").innerHTML = ps.map(p => `<option value="${p}">`).join("")).catch(() => {});
 setInterval(atualizarCandles, 4000);
 setInterval(atualizarConta, 6000);
 setInterval(atualizarContagem, 1000);
+setInterval(atualizarBots, 10000);
 
 document.querySelectorAll(".alternar").forEach(el => {
   el.onclick = () => {
@@ -1018,6 +1173,15 @@ $("alavancagem").oninput = atualizarFormulario;
 $("abrir-botao").onclick = abrirPosicao;
 $("dimensionar").onclick = dimensionarPosicao;
 $("sugerir").onclick = sugerirNiveis;
+$("bot-novo").onclick = () => {
+  const form = $("bot-form");
+  const abrir = form.style.display === "none";
+  form.style.display = abrir ? "grid" : "none";
+  if (abrir) { $("bot-simbolo").value = simbolo; previaBot(); }
+};
+$("bot-cancelar").onclick = () => { $("bot-form").style.display = "none"; };
+$("bot-risco").oninput = previaBot;
+$("bot-criar").onclick = criarBot;
 $("analisar").onclick = analisar;
 $("varrer").onclick = varrer;
 $("varrer-todas").onclick = varrerTodas;

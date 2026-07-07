@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from cripto import TIMEFRAME_CONTEXTO, dados, estrategia
+from cripto.bots import MotorBots
 from cripto.carteira import Carteira
 from cripto.fluxo import adicionar_fluxo
 from cripto.indicadores import adicionar_indicadores
@@ -32,6 +33,7 @@ PORTA = 8765  # padrão; substituída pela opção --porta em main()
 PAGINA = Path(__file__).resolve().parent / "web" / "simulador.html"
 
 carteira = Carteira()
+motor_bots = MotorBots(carteira)  # a thread do motor só inicia em main()
 
 
 def api_klines(params):
@@ -331,6 +333,12 @@ class Manipulador(BaseHTTPRequestHandler):
                 self._responder(api_varredura_total(params))
             elif url.path == "/api/varredura_familias":
                 self._responder(api_varredura_familias(params))
+            elif url.path == "/api/bots":
+                self._responder({
+                    "bots": motor_bots.listar(),
+                    "estrategias": {n: e.titulo for n, e in estrategia.ESTRATEGIAS.items()},
+                    "tfs": list(TIMEFRAME_CONTEXTO),
+                })
             else:
                 self._erro("Rota não encontrada", 404)
         except (ValueError, KeyError) as erro:
@@ -379,6 +387,22 @@ class Manipulador(BaseHTTPRequestHandler):
             elif url.path == "/api/reset":
                 carteira.resetar()
                 self._responder({"ok": True})
+            elif url.path == "/api/bots/criar":
+                self._responder(motor_bots.criar(
+                    simbolo=corpo["simbolo"], tf=corpo["tf"], estrategia=corpo["estrategia"],
+                    limiar=corpo.get("limiar", 70),
+                    stop=corpo.get("stop", 2.0), alvo=corpo.get("alvo", 1.0),
+                    risco_pct=corpo.get("risco_pct", 1.0),
+                    alavancagem=corpo.get("alavancagem", 1),
+                    filtro_regime=bool(corpo.get("filtro_regime", True)),
+                    direcoes=corpo.get("direcoes") or ["COMPRA", "VENDA"],
+                    nome=corpo.get("nome"),
+                ))
+            elif url.path == "/api/bots/alternar":
+                self._responder(motor_bots.alternar(corpo["id"]))
+            elif url.path == "/api/bots/excluir":
+                motor_bots.excluir(corpo["id"])
+                self._responder({"ok": True})
             else:
                 self._erro("Rota não encontrada", 404)
         except (ValueError, KeyError) as erro:
@@ -412,9 +436,13 @@ def main():
         print(f"Use a janela que já está rodando ({endereco}) ou inicie em outra porta:")
         print(f"  python simulador.py --porta {PORTA + 1}")
         sys.exit(1)
+    motor_bots.iniciar()  # bots avaliam candles fechados enquanto o simulador roda
     print("=" * 56)
     print("  SIMULADOR DE TRADES — paper trading com USDT fictício")
     print(f"  Aberto em: {endereco}")
+    n_bots = sum(1 for b in motor_bots.bots if b["ativo"])
+    if n_bots:
+        print(f"  Bots ativos: {n_bots} (operam enquanto esta janela estiver aberta)")
     print("  Para encerrar: Ctrl+C nesta janela")
     print("=" * 56)
     if not args.sem_navegador:
