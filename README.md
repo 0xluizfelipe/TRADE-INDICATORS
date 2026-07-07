@@ -1,6 +1,6 @@
 # Analisador Cripto — análise técnica por confluência de indicadores
 
-**Versão 3.0** (julho/2026)
+**Versão 3.1** (julho/2026)
 
 Sistema que analisa gráficos de criptomoedas usando os indicadores mais consagrados
 do mercado **e price action** (padrões de candle, estrutura de mercado, suporte e
@@ -10,6 +10,22 @@ profissionais e pela literatura de análise técnica.
 
 Inclui um **laboratório de estratégias** que mede a assertividade histórica real de
 cada combinação estratégia/stop/alvo, validando em dados fora da amostra.
+
+## Novidades da versão 3.1
+
+- **🤖 Bots de operação automática no simulador**: cada bot vigia um par + timeframe +
+  estratégia e opera sozinho a cada candle fechado, com risco dimensionado (máx. 2%),
+  stop/alvo por ATR, filtro de regime, guardas de exposição e jornal de decisões.
+- **Validação walk-forward para os bots** (5 ativos, custos completos): a config
+  `rompimento` 1d stop 1,5×/alvo 3,0× ATR limiar 85 foi **aprovada fora da amostra**
+  (FL 1,41 em 109 operações/~5 anos); `reversao` 4h 2,0×/1,0× limiar 70 passou nos 3
+  filtros do laboratório. O veredito do walk-forward agora respeita a relação
+  risco/retorno das configs (não exige mais acerto fixo).
+- **Painel de desempenho por bot** + comparativo Manual × Bots na interface.
+- **🔔 Notificações nativas do sistema** quando um bot abre posição ou uma operação fecha.
+- **`iniciar-simulador.bat`**: mantém servidor e bots sempre no ar (com auto-reinício).
+- Carteira: campo `bot` no histórico/CSV e diretório de dados isolável
+  (`ANALISTA_CRIPTO_DIR`) para testes.
 
 ## Novidades da versão 3.0
 
