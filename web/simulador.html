@@ -434,9 +434,14 @@ async function carregarCandles() {
   } catch (e) { avisar("Falha ao carregar o gráfico: " + e.message, true); }
 }
 async function atualizarCandles() {
+  const alvo = simbolo + tf;
   try {
     const dados = await api(`/api/klines?simbolo=${simbolo}&tf=${tf}&limite=2`);
-    dados.forEach(c => {
+    if (alvo !== simbolo + tf) return; // trocou de par/tf enquanto o fetch corria
+    // update() da lightweight-charts lança "Cannot update oldest data" para candle
+    // mais antigo que o último do gráfico — só o último e os novos podem ser aplicados.
+    const ultimo = candlesAtuais.length ? candlesAtuais[candlesAtuais.length - 1].time : 0;
+    dados.filter(c => c.time >= ultimo).forEach(c => {
       serie.update(c);
       const i = candlesAtuais.findIndex(k => k.time === c.time);
       if (i >= 0) candlesAtuais[i] = c; else candlesAtuais.push(c);
