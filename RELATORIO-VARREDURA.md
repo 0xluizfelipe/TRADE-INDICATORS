@@ -203,6 +203,9 @@ Leitura honesta:
    e ficou lucrativo fora da amostra por ~5 anos (FL 1,41) com acerto de só 44% — perfil "muitos
    stops pequenos, alvos grandes", ideal para bot (não dói na disciplina) e viável porque com
    RR 2:1 o ponto de empate é 33%.
-4. **Defeito de critério encontrado:** o veredito do walk-forward exige acerto ≥ meta (65%) mesmo
-   quando as configs escolhidas têm RR 2:1 (empate 33%) — reprova resultados lucrativos. Corrigir
-   para julgar por FL/expectativa (ou empate da RR média das janelas) na próxima iteração.
+4. **Defeito de critério encontrado e CORRIGIDO (07/07/2026):** o veredito do walk-forward exigia
+   acerto ≥ meta (65%) mesmo quando as configs escolhidas tinham RR 2:1 (empate 33%) — reprovava
+   resultados lucrativos. Agora julga por lucro + IC95 do acerto contra o **empate ponderado das
+   RRs escolhidas**. Com o critério correto, a bateria 1d+regime passou a **APROVADO**
+   (FL 1,41 · IC95↓ 35,1% ≥ empate 33,3% · 109 operações) — a config do bot "Rompimento 1d
+   (walk-forward)" está formalmente validada.

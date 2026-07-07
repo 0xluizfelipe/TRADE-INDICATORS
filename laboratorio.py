@@ -291,12 +291,25 @@ def main():
         n_wf, wr_wf, fl_wf = metricas(wf["oos"])
         ci_wf = wilson_inferior(wr_wf, n_wf)
         fl_txt = "inf" if fl_wf == float("inf") else f"{fl_wf:.2f}"
+        # O veredito precisa respeitar a relação risco/retorno das configs que o
+        # walk-forward escolheu: com RR 2:1 o empate é 33% — exigir meta fixa de
+        # acerto (65%) reprovaria resultados lucrativos. Compara o pior caso do
+        # acerto (IC95) com o empate PONDERADO pelas operações de cada janela.
+        pesos = [(h["n_oos"], break_even(h["stop"], h["alvo"]))
+                 for h in wf["historico"] if h["n_oos"]]
+        empate_wf = (sum(n * be for n, be in pesos) / sum(n for n, _ in pesos)) if pesos else 50.0
         print(f"  AGREGADO fora da amostra: {n_wf} operações | acerto {wr_wf:.1f}% "
-              f"(IC95↓ {ci_wf:.1f}%) | fator de lucro {fl_txt}")
-        veredito = ("APROVADO" if wr_wf >= args.meta and fl_wf > 1.0 and n_wf >= MINIMO_TRADES_TESTE
-                    else "REPROVADO")
-        print(f"  Veredito walk-forward: {veredito} "
-              f"(é o número mais próximo do que você viveria operando de verdade)")
+              f"(IC95↓ {ci_wf:.1f}%) | fator de lucro {fl_txt} | "
+              f"empate das RRs escolhidas: {empate_wf:.1f}%")
+        if fl_wf > 1.0 and n_wf >= MINIMO_TRADES_TESTE and ci_wf >= empate_wf:
+            veredito = "APROVADO — lucrativo e o pior caso do acerto ainda supera o empate"
+        elif fl_wf > 1.0 and n_wf >= MINIMO_TRADES_TESTE:
+            veredito = (f"LUCRATIVO, MAS SEM CONFIANÇA ESTATÍSTICA — IC95↓ {ci_wf:.1f}% "
+                        f"abaixo do empate {empate_wf:.1f}% (pode ser sorte)")
+        else:
+            veredito = "REPROVADO"
+        print(f"  Veredito walk-forward: {veredito}")
+        print("  (é o número mais próximo do que você viveria operando de verdade)")
 
     # ----- desempenho por regime de mercado -----
     print()
@@ -319,7 +332,8 @@ def main():
 
     print("\n  Como ler:")
     print("  - IC95↓ = pior caso do acerto com 95% de confiança. Se < EMPATE, pode ser só sorte.")
-    print("  - Walk-forward é o teste mais duro: se reprova aqui, desconfie do resto.")
+    print("  - Walk-forward é o teste mais duro: se reprova aqui, desconfie do resto. O veredito")
+    print("    julga por LUCRO + confiança contra o empate da RR escolhida (não por acerto fixo).")
     print("  - Regime: se uma estratégia acerta muito mais em um regime, opere SÓ nele.")
     print("  - Empate por RR: 0,5->67% | 0,7->60% | 1->50% | 2->34% (já com custos, exija folga).")
 
