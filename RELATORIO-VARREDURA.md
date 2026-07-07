@@ -209,3 +209,23 @@ Leitura honesta:
    RRs escolhidas**. Com o critério correto, a bateria 1d+regime passou a **APROVADO**
    (FL 1,41 · IC95↓ 35,1% ≥ empate 33,3% · 109 operações) — a config do bot "Rompimento 1d
    (walk-forward)" está formalmente validada.
+
+### 5.1 Validação das GESTÕES DE SAÍDA para os bots (07/07/2026)
+
+8 rodadas (4 modos × 4h/1d, mesmos 5 ativos, regime ON). Walk-forward agregado:
+
+| Modo | 4h (FL · veredito) | 1d (FL · acerto · veredito) |
+|---|---|---|
+| fixo | 1,00 · sem confiança | 1,41 · 44,0% · **APROVADO** |
+| breakeven | 1,00 · sem confiança | 1,48 · 42,2% · sem confiança |
+| **trailing** | 0,99 · reprovado | **1,57 · 53,6% · APROVADO (maior folga: IC 44,4% vs empate 33,3%)** |
+| parcial | 1,02 · sem confiança | 1,35 · 53,9% · APROVADO |
+
+A/B na config exata do bot Rompimento 1d (5 ativos, ~120 operações, período completo):
+fixo 47,9%/FL 1,66 · breakeven 42,5%/1,90 · **trailing 59,2%/1,87** · parcial 60,0%/1,75.
+
+**Conclusões:** (a) para o bot **Rompimento 1d, TRAILING é o modo recomendado** — melhor
+walk-forward (FL 1,57) com folga estatística e +11pp de acerto na config exata mantendo o fator;
+(b) para o bot **Reversão 4h (stop 2,0/alvo 1,0), gestão é matematicamente inerte** — o gatilho
+de +1R (2×ATR) fica além do alvo (1×ATR); manter FIXO; (c) breakeven puro tem o melhor fator
+bruto mas derruba o acerto e perde a confiança no walk-forward — descartado como padrão.
