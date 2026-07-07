@@ -321,6 +321,13 @@
             </select></div>
         </div>
         <div><label>Estratégia</label><select id="bot-estrategia" style="width:100%"></select></div>
+        <div><label>Gestão da saída (validação: RELATORIO-VARREDURA.md §5.1)</label>
+          <select id="bot-gestao" style="width:100%">
+            <option value="fixo" selected>Fixa — stop e alvo parados (validada p/ alvo curto, ex. reversão 4h)</option>
+            <option value="trailing">Trailing — persegue o lucro por ATR (✅ validada p/ alvos 2:1, ex. rompimento 1d)</option>
+            <option value="breakeven">Breakeven — stop na entrada em +1R (descartada como padrão no lab)</option>
+            <option value="parcial">Parcial — realiza metade em +1R, resto corre</option>
+          </select></div>
         <div class="dupla">
           <div><label>Score mínimo (limiar)</label><input id="bot-limiar" type="number" value="70" min="1" max="100" style="width:100%"></div>
           <div><label>Risco por operação (%) — máx 2</label><input id="bot-risco" type="number" value="1" min="0.1" max="2" step="0.1" style="width:100%"></div>
@@ -418,7 +425,7 @@ function notificarMudancas(c) {
     });
     if (fechPrev !== null) c.historico.forEach(r => {
       if (r.fechamento_ms > fechPrev) {
-        const emoji = { ALVO: "✅", MANUAL: "☑️", STOP: "🛑", LIQUIDACAO: "💥" }[r.motivo] || "•";
+        const emoji = { ALVO: "✅", PARCIAL: "✂️", MANUAL: "☑️", STOP: "🛑", LIQUIDACAO: "💥" }[r.motivo] || "•";
         notificar(`${emoji} ${r.motivo}: ${r.bot ? "🤖 " : ""}${r.simbolo} ${r.direcao}`,
           `resultado ${r.resultado >= 0 ? "+" : ""}${fmt(r.resultado, 2)} USDT`);
       }
@@ -732,7 +739,7 @@ async function atualizarConta() {
       const div = document.createElement("div");
       div.className = "hist-item";
       const cor = r.resultado >= 0 ? "ganho" : "perda";
-      const badge = { ALVO: "alvo", STOP: "stop", LIQUIDACAO: "liquidacao" }[r.motivo] || "";
+      const badge = { ALVO: "alvo", PARCIAL: "alvo", STOP: "stop", LIQUIDACAO: "liquidacao" }[r.motivo] || "";
       const corDir = r.direcao === "COMPRA" ? "var(--verde)" : "var(--vermelho)";
       div.title = [r.estrategia !== "manual" ? `estratégia: ${r.estrategia} (score ${r.score ?? "—"})` : "abertura manual",
                    r.nota ? `nota: ${r.nota}` : ""].filter(Boolean).join(" · ");
@@ -780,7 +787,7 @@ function horaBot(ms) {
 function cartaoBot(b, jornalAberto, dp) {
   const div = document.createElement("div");
   div.className = "posicao";
-  const icone = { entrada: "✅", sinal: "·", pulado: "⏭️", erro: "⚠️", info: "ℹ️" };
+  const icone = { entrada: "✅", sinal: "·", pulado: "⏭️", gestao: "🛡️", erro: "⚠️", info: "ℹ️" };
   const jornal = b.jornal.map(e =>
     `<div class="criterio">${horaBot(e.t)} ${icone[e.tipo] || "·"} ${esc(e.msg)}</div>`).join("")
     || '<div class="criterio">sem eventos ainda</div>';
@@ -804,6 +811,7 @@ function cartaoBot(b, jornalAberto, dp) {
       <span>limiar ${b.limiar} · ${b.direcoes.join(" + ")}</span>
       <span>stop ${b.stop}×ATR · alvo ${b.alvo}×ATR</span>
       <span>risco ${b.risco_pct}% · ${b.alavancagem}x${b.filtro_regime ? " · a favor do regime" : ""}</span>
+      <span>saída: ${({ fixo: "fixa", breakeven: "breakeven", trailing: "trailing 🛡️", parcial: "parcial" })[b.gestao] || "fixa"}</span>
     </div>
     <div class="criterio" style="margin-top:5px">${desemp}</div>
     <details data-bot="${b.id}" style="margin-top:6px"${jornalAberto ? " open" : ""}>
@@ -891,6 +899,7 @@ async function criarBot() {
       simbolo: $("bot-simbolo").value.toUpperCase().trim(),
       tf: $("bot-tf").value,
       estrategia: $("bot-estrategia").value,
+      gestao: $("bot-gestao").value,
       limiar: $("bot-limiar").value,
       stop: $("bot-stop").value,
       alvo: $("bot-alvo").value,

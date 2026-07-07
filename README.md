@@ -210,6 +210,14 @@ mesmo capital, mesmas regras. O botão **🔔 Notificações** no cabeçalho ati
 nativos do sistema quando um bot abre posição ou qualquer operação fecha
 (alvo/stop/liquidação), mesmo com a aba em segundo plano.
 
+**Gestão da saída** (validada no laboratório — `RELATORIO-VARREDURA.md` §5.1): além da
+saída fixa, o bot pode gerenciar a posição sozinho — **breakeven** (stop na entrada em
++1R), **trailing** (persegue o melhor preço a stop×ATR; ✅ aprovado no walk-forward 1d
+com folga) e **parcial** (realiza metade em +1R, com semântica de ordem limitada).
+Cada ação vira um evento 🛡️ no jornal do bot. Para configs de alvo curto (ex.: stop
+2×/alvo 1× ATR), o gatilho de +1R fica além do alvo e a gestão raramente ativa —
+nesses casos, use a saída fixa mesmo.
+
 > Honestidade obrigatória: bot não cria edge — ele só executa com disciplina uma
 > estratégia que você deve validar antes no `laboratorio.py` (walk-forward). Use os
 > bots para medir, no simulado, como a estratégia se comporta operada friamente.
