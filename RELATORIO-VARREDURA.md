@@ -4,6 +4,12 @@ Data: 06/07/2026 · Base: commit `75c1da0` (main)
 Método: leitura integral dos ~2.800 linhas + execução real (análise, backtest, laboratório,
 scan, API do simulador) + verificação empírica dos bugs suspeitos com dados sintéticos.
 
+> **ATUALIZAÇÃO 06/07/2026 — todos os bugs B1–B14 foram CORRIGIDOS** (um commit por
+> correção nesta branch; veja `git log`). Cada fix foi verificado: testes sintéticos
+> (RSI, Fibonacci, cap de nocional, filtro de gap), curl na API (400/403/colisão de
+> porta) e navegador real (preço ao vivo fluindo + lib local). As seções 2 (método)
+> e 3 (melhorias) permanecem como plano da nova versão.
+
 ---
 
 ## 1. BUGS CONFIRMADOS
