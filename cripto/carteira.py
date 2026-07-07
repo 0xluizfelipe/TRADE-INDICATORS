@@ -23,7 +23,9 @@ from . import dados
 # A carteira NÃO pode ficar na pasta do projeto se ela estiver no OneDrive/Dropbox:
 # a sincronização em nuvem pode reverter o arquivo enquanto o simulador grava,
 # apagando suas operações. Por isso guardamos em uma pasta local não sincronizada.
-_BASE_DADOS = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "analista-cripto"
+# ANALISTA_CRIPTO_DIR permite apontar outro diretório (testes usam carteira isolada).
+_BASE_DADOS = Path(os.environ.get("ANALISTA_CRIPTO_DIR")
+                   or Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "analista-cripto")
 _BASE_DADOS.mkdir(parents=True, exist_ok=True)
 ARQUIVO = _BASE_DADOS / "carteira.json"
 SALDO_INICIAL = 10_000.0
@@ -92,7 +94,8 @@ class Carteira:
     def abrir(self, simbolo: str, direcao: str, margem: float, alavancagem: int,
               stop: float | None = None, alvo: float | None = None,
               regime: str | None = None, estrategia: str | None = None,
-              score: int | None = None, nota: str | None = None) -> dict:
+              score: int | None = None, nota: str | None = None,
+              bot: str | None = None) -> dict:
         simbolo = simbolo.upper()
         direcao = direcao.upper()
         if direcao not in ("COMPRA", "VENDA"):
@@ -185,6 +188,7 @@ class Carteira:
                 "estrategia": estrategia or "manual",
                 "score": score,
                 "nota": (nota or "").strip()[:200] or None,
+                "bot": bot,  # id do bot que abriu a posição (None = operação manual)
                 "abertura_ms": _agora_ms(),
                 "ultimo_check_ms": _agora_ms(),
             }
@@ -258,6 +262,7 @@ class Carteira:
             "estrategia": posicao.get("estrategia", "manual"),
             "score": posicao.get("score"),
             "nota": posicao.get("nota"),
+            "bot": posicao.get("bot"),
             "abertura_ms": posicao["abertura_ms"],
             "fechamento_ms": quando_ms,
         }
@@ -498,7 +503,7 @@ class Carteira:
         escritor.writerow([
             "abertura_utc", "fechamento_utc", "simbolo", "direcao", "alavancagem",
             "margem_usdt", "entrada", "saida", "motivo", "resultado_usdt",
-            "estrategia", "score", "regime", "contra_regime", "tinha_stop", "nota",
+            "estrategia", "score", "regime", "contra_regime", "tinha_stop", "bot", "nota",
         ])
         for r in fechadas:
             escritor.writerow([
@@ -507,7 +512,8 @@ class Carteira:
                 f"{r.get('margem', 0):.2f}", r.get("entrada"), r.get("saida"),
                 r.get("motivo"), f"{r.get('resultado', 0):.2f}",
                 r.get("estrategia"), r.get("score"), r.get("regime"),
-                r.get("contra_regime"), r.get("tinha_stop"), r.get("nota") or "",
+                r.get("contra_regime"), r.get("tinha_stop"),
+                r.get("bot") or "", r.get("nota") or "",
             ])
         return saida.getvalue()
 
