@@ -26,7 +26,7 @@ _MINUTOS_INTERVALO = {
 
 
 def _get(caminho: str, params: dict | None = None, base: str = BASE_URL) -> object:
-    """Faz uma requisição GET com até 3 tentativas."""
+    """Faz uma requisição GET com até 3 tentativas (erros 4xx não são repetidos)."""
     ultimo_erro = None
     for tentativa in range(3):
         try:
@@ -34,6 +34,15 @@ def _get(caminho: str, params: dict | None = None, base: str = BASE_URL) -> obje
             if resposta.status_code == 429:  # limite de requisições: espera e tenta de novo
                 time.sleep(5 * (tentativa + 1))
                 continue
+            if 400 <= resposta.status_code < 500:
+                # erro do PEDIDO (par inexistente, parâmetro inválido): repetir não
+                # ajuda — falha na hora, com a mensagem da própria Binance.
+                try:
+                    detalhe = resposta.json().get("msg") or f"HTTP {resposta.status_code}"
+                except ValueError:
+                    detalhe = f"HTTP {resposta.status_code}"
+                raise ValueError(
+                    f"Binance rejeitou a consulta ({caminho}): {detalhe} — o par/parâmetro existe?")
             resposta.raise_for_status()
             return resposta.json()
         except requests.RequestException as erro:
