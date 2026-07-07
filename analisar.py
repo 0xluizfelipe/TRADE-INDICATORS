@@ -59,13 +59,20 @@ def comando_analise(args):
     simbolo = args.simbolo.upper()
     df, df_maior, tf_maior = carregar(simbolo, args.tf, com_fluxo=args.estrategia == "fluxo")
     diag = estrategia.avaliar(df, df_maior, args.estrategia, args.stop, args.alvo)
+    try:
+        preco_vivo = dados.preco_atual(simbolo)
+    except Exception:
+        preco_vivo = None  # sem rede agora; segue só com o fechamento analisado
 
     linha("=")
     print(f"  {simbolo}  |  timeframe {args.tf} (contexto {tf_maior})")
     print(f"  Estratégia: {diag['estrategia']}")
     print(f"  Candle analisado: {diag['data_candle']:%d/%m/%Y %H:%M} UTC")
     linha("=")
-    print(f"  Preço atual:      {diag['preco']:,.6g} USDT")
+    if preco_vivo is not None:
+        print(f"  Preço ao vivo:    {preco_vivo:,.6g} USDT")
+    # análise, stop e alvo usam o FECHAMENTO do último candle fechado (sem repaint)
+    print(f"  Últ. fechamento:  {diag['preco']:,.6g} USDT")
     print(f"  RSI(14):          {diag['rsi']:.1f}")
     print(f"  ADX(14):          {diag['adx']:.1f}")
     print(f"  ATR(14):          {diag['atr']:,.6g}")
