@@ -310,6 +310,8 @@ class Manipulador(BaseHTTPRequestHandler):
                 self._responder(api_varredura_familias(params))
             else:
                 self._erro("Rota não encontrada", 404)
+        except (ValueError, KeyError) as erro:
+            self._erro(erro, 400)  # erro de entrada (tf/limite/par inválido), não do servidor
         except Exception as erro:
             self._erro(erro, 500)
 
