@@ -24,13 +24,11 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from cripto import backtest, dados
+from cripto import TIMEFRAME_CONTEXTO, backtest, dados
 from cripto.estrategia import ESTRATEGIAS, calcular_scores
 from cripto.fluxo import adicionar_fluxo
 from cripto.indicadores import adicionar_indicadores
 from cripto.priceaction import adicionar_priceaction
-
-TIMEFRAME_CONTEXTO = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}
 
 # (stop em ATR, alvo em ATR) — risco/retorno = alvo/stop
 SAIDAS = [
@@ -78,7 +76,7 @@ def break_even(stop: float, alvo: float) -> float:
     return 100 * stop / (stop + alvo)
 
 
-def walk_forward(combos: list[dict], n_folds: int, meta: float):
+def walk_forward(combos: list[dict], n_folds: int):
     """Walk-forward ancorado: em cada janela escolhe a melhor config olhando só o
     passado e mede na janela seguinte. Devolve os trades OOS agregados e o histórico."""
     todas_datas = sorted(t[0] for c in combos for t in c["trades"])
@@ -272,7 +270,7 @@ def main():
         print("  Resultado honesto: acerto alto com poucos trades costuma ser sorte, não método.")
 
     # ----- walk-forward -----
-    wf = walk_forward(resultados, args.folds, args.meta)
+    wf = walk_forward(resultados, args.folds)
     print()
     print("=" * L)
     print("  WALK-FORWARD (escolhe a melhor config olhando só o passado e mede no futuro)")

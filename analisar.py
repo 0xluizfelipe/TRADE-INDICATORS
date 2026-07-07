@@ -29,12 +29,11 @@ import time
 # Garante acentuação correta no console do Windows, mesmo com saída redirecionada
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from cripto import backtest, dados, estrategia
+from cripto import TIMEFRAME_CONTEXTO, backtest, dados, estrategia
 from cripto.fluxo import adicionar_fluxo
 from cripto.indicadores import adicionar_indicadores
 from cripto.priceaction import adicionar_priceaction
 
-TIMEFRAME_CONTEXTO = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}
 LARGURA = 64
 
 

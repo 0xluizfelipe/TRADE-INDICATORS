@@ -118,7 +118,11 @@ def executar(
         scores = calcular_scores(df, df_maior, estrategia)
 
     # nº de períodos de 8h em cada candle, para cobrar funding proporcional ao tempo
-    _horas_candle = {"15m": 0.25, "1h": 1, "4h": 4, "1d": 24, "1w": 168}.get(timeframe, 4)
+    _horas_candle = {
+        "1m": 1 / 60, "3m": 0.05, "5m": 1 / 12, "15m": 0.25, "30m": 0.5,
+        "1h": 1, "2h": 2, "4h": 4, "6h": 6, "8h": 8, "12h": 12,
+        "1d": 24, "3d": 72, "1w": 168,
+    }.get(timeframe, 4)
     funding_por_candle = funding_8h * _horas_candle / 8
 
     capital = capital_inicial
@@ -132,7 +136,6 @@ def executar(
     )
     posicao: Operacao | None = None
     quantidade = 0.0
-    candles_aberta = 0  # quantos candles a posição atual está aberta (para o funding)
     # estado dinâmico da posição aberta (usado pela gestão de saída)
     stop_atual = melhor = risco0 = atr0 = alvo_parcial = 0.0
     qtd_rest = gross_acum = fees_acum = funding_acum = 0.0
@@ -162,7 +165,6 @@ def executar(
         if posicao is not None:
             longa = posicao.direcao == "COMPRA"
             entrada_p = posicao.entrada
-            candles_aberta += 1
             funding_acum += qtd_rest * entrada_p * funding_por_candle  # funding do candle
             hi, lo = maxima[i], minima[i]
 
@@ -198,7 +200,6 @@ def executar(
                 capital += posicao.lucro
                 resultado.operacoes.append(posicao)
                 posicao = None
-                candles_aberta = 0
                 resultado.curva_capital.append(capital)
                 continue
 
@@ -262,7 +263,6 @@ def executar(
         funding_acum = 0.0
         be_ativo = parcial_feita = False
         alvo_parcial = entrada + risco0 if direcao == "COMPRA" else entrada - risco0
-        candles_aberta = 0
 
         # o candle de ENTRADA também pode atingir stop ou alvo (pior caso: stop tem
         # prioridade). Pular essa checagem, como muitos backtests fazem, esconde o

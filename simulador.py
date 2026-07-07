@@ -22,15 +22,14 @@ from urllib.parse import parse_qs, urlparse
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from cripto import dados, estrategia
+from cripto import TIMEFRAME_CONTEXTO, dados, estrategia
 from cripto.carteira import Carteira
 from cripto.fluxo import adicionar_fluxo
 from cripto.indicadores import adicionar_indicadores
 from cripto.priceaction import adicionar_priceaction
 
-PORTA = 8765
+PORTA = 8765  # padrão; substituída pela opção --porta em main()
 PAGINA = Path(__file__).resolve().parent / "web" / "simulador.html"
-TIMEFRAME_CONTEXTO = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}
 
 carteira = Carteira()
 
@@ -237,7 +236,11 @@ def api_varredura_familias(params):
             else:
                 rs_ok = bool(ultimo["rs_sobe"]) if compra else bool(ultimo["rs_desce"])
 
-            familias = 1 + int(fluxo_ok) + int(funding_ok is True) + int(rs_ok is True)
+            # a família PREÇO só conta se o melhor sinal tem força ao menos moderada
+            # (antes contava sempre, inflando o placar de pares sem sinal de preço)
+            preco_ok = melhor["score"] >= estrategia.LIMIAR_MODERADO
+            familias = (int(preco_ok) + int(fluxo_ok) + int(funding_ok is True)
+                        + int(rs_ok is True))
             return {
                 "simbolo": par, "direcao": melhor["direcao"], "score": melhor["score"],
                 "forca": melhor["forca"], "estrategia": melhor["nome"],

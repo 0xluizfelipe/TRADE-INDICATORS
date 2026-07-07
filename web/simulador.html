@@ -343,6 +343,9 @@ function fmt(x, casas) {
     ? { minimumFractionDigits: casas, maximumFractionDigits: casas }
     : { maximumSignificantDigits: 6 });
 }
+// escapa texto digitado pelo usuário antes de inseri-lo via innerHTML
+const esc = s => String(s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function avisar(msg, tipo) {
   if (tipo === true) tipo = "erro";
   const div = document.createElement("div");
@@ -553,7 +556,7 @@ function cartaoPosicao(p) {
       <span>margem ${fmt(p.margem, 2)}</span><span>liq. ${p.alavancagem > 1 ? fmt(p.liquidacao) : "—"}</span>
     </div>
     ${barraProgresso(p)}
-    ${p.nota ? `<div class="nota-pos">“${p.nota}”</div>` : ""}
+    ${p.nota ? `<div class="nota-pos">“${esc(p.nota)}”</div>` : ""}
     <div class="pos-acoes">
       <button data-acao="be" title="Move o stop para o preço de entrada (só funciona com a posição no lucro)">Stop → entrada</button>
       <button data-acao="editar">Editar níveis</button>

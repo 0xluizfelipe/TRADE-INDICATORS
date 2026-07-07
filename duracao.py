@@ -6,11 +6,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import pandas as pd
 
-from cripto import backtest, dados
+from cripto import TIMEFRAME_CONTEXTO, backtest, dados
 from cripto.indicadores import adicionar_indicadores
 from cripto.priceaction import adicionar_priceaction
-
-TIMEFRAME_CONTEXTO = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}
 
 CONFIGURACOES = [
     ("DOGEUSDT", "4h", "confluencia", 2.0, 1.0, 70),
@@ -21,9 +19,12 @@ CONFIGURACOES = [
 
 for simbolo, tf, estrategia, stop, alvo, limiar in CONFIGURACOES:
     candles = 3000 if tf == "4h" else 1500
-    df = adicionar_priceaction(adicionar_indicadores(dados.buscar_candles(simbolo, tf, candles)))
+    # apenas candles FECHADOS, como no CLI/laboratório (o candle aberto ainda muda)
+    df = adicionar_priceaction(adicionar_indicadores(
+        dados.buscar_candles(simbolo, tf, candles, apenas_fechados=True)))
     df_maior = adicionar_indicadores(
-        dados.buscar_candles(simbolo, TIMEFRAME_CONTEXTO[tf], max(400, candles // 4)))
+        dados.buscar_candles(simbolo, TIMEFRAME_CONTEXTO[tf], max(400, candles // 4),
+                             apenas_fechados=True))
     try:
         res = backtest.executar(df, df_maior, simbolo=simbolo, timeframe=tf,
                                 estrategia=estrategia, limiar=limiar,
