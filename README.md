@@ -201,8 +201,11 @@ intervenção. Cada bot vigia **um par + um timeframe (15m/1h/4h/1d) + uma estra
 Cada decisão (entrada, sinal fraco, pulo por guarda de risco, erro) fica registrada
 no **jornal do bot**, e as posições abertas por bot aparecem com o selo 🤖. Regras de
 segurança fixas: risco por operação limitado a 2%, alavancagem de bot limitada a 10x,
-uma posição por bot. Os bots operam **enquanto a janela do simulador estiver aberta**
-(não operam retroativamente; ao reabrir, retomam no próximo candle).
+uma posição por bot. A execução é honesta com o que foi validado: a entrada a mercado
+paga **0,05% de slippage simulado** (o mesmo custo do backtest) e é **pulada se o
+preço já se moveu mais de 0,5×ATR** desde o candle de sinal (entrada atrasada). Os
+bots operam **enquanto a janela do simulador estiver aberta** (não operam
+retroativamente; ao reabrir, retomam no próximo candle).
 
 Acompanhamento: cada card de bot mostra o **desempenho realizado** (resultado, taxa de
 acerto, fator de lucro, posições abertas) e o topo do card compara **Manual × Bots** —

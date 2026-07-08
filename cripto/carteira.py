@@ -95,7 +95,7 @@ class Carteira:
               stop: float | None = None, alvo: float | None = None,
               regime: str | None = None, estrategia: str | None = None,
               score: int | None = None, nota: str | None = None,
-              bot: str | None = None) -> dict:
+              bot: str | None = None, slippage: float = 0.0) -> dict:
         simbolo = simbolo.upper()
         direcao = direcao.upper()
         if direcao not in ("COMPRA", "VENDA"):
@@ -113,6 +113,10 @@ class Carteira:
                 "operar alavancado sem stop é a causa nº1 de liquidação.")
 
         preco = dados.preco_atual(simbolo)
+        if slippage:
+            # escorregamento da ordem a mercado, sempre CONTRA você — os bots usam
+            # 0,05% para a entrada simulada ter o mesmo custo modelado no backtest
+            preco = preco * (1 + slippage) if direcao == "COMPRA" else preco * (1 - slippage)
         quantidade = margem * alavancagem / preco
         taxa_abertura = TAXA * quantidade * preco
 

@@ -9,10 +9,13 @@ por ATR e margem dimensionada pelo risco — o mesmo fluxo validado no backtest
 Guardas de risco de CADA operação, na ordem em que são checadas:
 1. filtro de regime opcional (COMPRA só em ALTA, VENDA só em BAIXA);
 2. uma posição por bot (sem piramidar);
-3. risco por operação limitado a RISCO_MAX_PCT do capital (2%);
-4. exposição na mesma direção limitada a EXPOSICAO_MAX_PCT (40%) do capital;
-5. alavancagem de bot limitada a 10x (acima disso é zona de liquidação de varejo).
-Cada decisão — entrada, sinal fraco, pulo por guarda ou erro — fica no jornal.
+3. entrada atrasada: pula se o preço vivo já se moveu mais de ATRASO_MAX_ATR×ATR
+   desde o candle de sinal (as condições não são mais as validadas no backtest);
+4. risco por operação limitado a RISCO_MAX_PCT do capital (2%);
+5. exposição na mesma direção limitada a EXPOSICAO_MAX_PCT (40%) do capital;
+6. alavancagem de bot limitada a 10x (acima disso é zona de liquidação de varejo).
+A entrada a mercado paga SLIPPAGE_BOT (0,05%) — o mesmo custo do backtest.
+Cada decisão — entrada, sinal fraco, pulo por guarda, gestão ou erro — fica no jornal.
 
 Os bots NÃO operam retroativamente: se o simulador ficar fechado, retomam no
 próximo candle. As posições já abertas continuam protegidas pelo
@@ -35,6 +38,8 @@ ARQUIVO_BOTS = _BASE_DADOS / "bots.json"
 INTERVALO_MOTOR = 20       # segundos entre passadas do motor
 ALAVANCAGEM_MAX_BOT = 10   # teto de alavancagem para operação automática
 TAMANHO_JORNAL = 40        # eventos guardados por bot
+SLIPPAGE_BOT = 0.0005      # escorregamento da entrada a mercado (0,05%, como no backtest)
+ATRASO_MAX_ATR = 0.5       # entrada pulada se o preço já andou mais que isso (em ATR) do sinal
 
 _MINUTOS_TF = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
 
@@ -291,6 +296,13 @@ class MotorBots:
 
     # ------------------------- decisão de operação -------------------------
 
+    @staticmethod
+    def _entrada_atrasada(preco_vivo: float, preco_sinal: float, atr: float) -> bool:
+        """True se o preço vivo já se afastou mais de ATRASO_MAX_ATR×ATR do
+        fechamento do candle de sinal — em QUALQUER direção: correr atrás piora a
+        relação risco/retorno, e cair demais sugere que o cenário do sinal mudou."""
+        return abs(preco_vivo - preco_sinal) > ATRASO_MAX_ATR * atr
+
     def _avaliar_e_operar(self, bot: dict):
         simbolo, tf = bot["simbolo"], bot["tf"]
         df = adicionar_priceaction(adicionar_indicadores(
@@ -332,6 +344,17 @@ class MotorBots:
         if not atr > 0:
             self._anotar(bot, "erro", "ATR indisponível — sem como posicionar o stop.")
             return
+
+        # guarda 3: entrada atrasada — o backtest valida a entrada na abertura do
+        # candle seguinte (≈ fechamento do sinal); se o preço vivo já se afastou
+        # demais desse ponto, as condições não são mais as que foram validadas
+        if self._entrada_atrasada(preco, float(diag["preco"]), atr):
+            desvio = abs(preco - float(diag["preco"]))
+            self._anotar(bot, "pulado",
+                         f"{direcao} {score}/100, mas o preço já se moveu {desvio:g} "
+                         f"({desvio / atr:.1f}×ATR) desde o candle de sinal — entrada atrasada.")
+            return
+
         if direcao == "COMPRA":
             stop, alvo = preco - bot["stop"] * atr, preco + bot["alvo"] * atr
         else:
@@ -357,7 +380,7 @@ class MotorBots:
         posicao = self.carteira.abrir(
             simbolo, direcao, margem, bot["alavancagem"], stop=stop, alvo=alvo,
             regime=diag["regime"], estrategia=bot["estrategia"], score=int(score),
-            nota=f"bot {bot['nome']}", bot=bot["id"])
+            nota=f"bot {bot['nome']}", bot=bot["id"], slippage=SLIPPAGE_BOT)
         with self._trava:
             bot["operacoes"] = bot.get("operacoes", 0) + 1
         risco_txt = (f"risco {dim['risco_usdt']:.2f} USDT ({bot['risco_pct']:g}% de "
