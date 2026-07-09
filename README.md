@@ -1,6 +1,6 @@
 # Analisador Cripto — análise técnica por confluência de indicadores
 
-**Versão 3.1** (julho/2026)
+**Versão 3.2** (julho/2026)
 
 Sistema que analisa gráficos de criptomoedas usando os indicadores mais consagrados
 do mercado **e price action** (padrões de candle, estrutura de mercado, suporte e
@@ -10,6 +10,17 @@ profissionais e pela literatura de análise técnica.
 
 Inclui um **laboratório de estratégias** que mede a assertividade histórica real de
 cada combinação estratégia/stop/alvo, validando em dados fora da amostra.
+
+## Novidades da versão 3.2
+
+- **Gestão de saída nos bots**, validada antes de ligar (8 rodadas de walk-forward,
+  `RELATORIO-VARREDURA.md` §5.1): **breakeven**, **trailing** (✅ aprovado no 1d com
+  FL 1,57 e +11pp de acerto na config exata) e **parcial** (a carteira aprendeu a
+  fechar meia posição). Cada ação vira evento 🛡️ no jornal; estado sobrevive a
+  reinício. Em configs de alvo curto (stop 2×/alvo 1×) a gestão é inerte — use fixa.
+- **Execução honesta**: entrada dos bots paga 0,05% de slippage (o custo do backtest)
+  e é pulada se o preço já se moveu mais de 0,5×ATR desde o candle de sinal.
+- Coberto por teste determinístico (16 asserções: compra/venda/parcial/persistência).
 
 ## Novidades da versão 3.1
 
